@@ -1,0 +1,37 @@
+{
+  "source": "synthetic-fixture",
+  "segments": [
+    {
+      "index": 0,
+      "start": 1.0,
+      "end": 3.0,
+      "timestamp": 2.0,
+      "text": "वो कहाँ गई थी",
+      "language": "hin"
+    },
+    {
+      "index": 1,
+      "start": 4.0,
+      "end": 6.0,
+      "timestamp": 5.0,
+      "text": "वो कहाँ गया था",
+      "language": "hin"
+    },
+    {
+      "index": 2,
+      "start": 7.0,
+      "end": 9.0,
+      "timestamp": 8.0,
+      "text": "ಅವಳು ಎಲ್ಲಿಗೆ ಹೋದಳು",
+      "language": "kan"
+    },
+    {
+      "index": 3,
+      "start": 10.0,
+      "end": 12.0,
+      "timestamp": 11.0,
+      "text": "ಅವನು ಎಲ್ಲಿಗೆ ಹೋದನು",
+      "language": "kan"
+    }
+  ]
+}

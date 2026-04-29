@@ -1,0 +1,10 @@
+# Example values for a full Hindi/Kannada run.
+# The CLI currently accepts these values as flags.
+
+ocr_languages = "hin+kan+eng"
+threshold = 0.75
+crop_bottom_percent = 15
+frame_offsets = "0,-0.25,0.25"
+asr_backend = "whisper"
+asr_model = "base"
+asr_language = "auto"

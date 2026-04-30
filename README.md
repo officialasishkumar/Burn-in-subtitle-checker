@@ -113,3 +113,21 @@ The default OCR language string is `hin+kan+eng`. Use `burnsub doctor` to verify
 Burned-in subtitle OCR is sensitive to font, contrast, resolution, compression, placement, and timing. If the report shows empty or poor OCR, use `--save-artifacts` and inspect the crop images. If subtitles are not in the bottom band, use `--crop-box` or adjust `--crop-bottom-percent`.
 
 For long videos, prefer the split-stage workflow so transcript and OCR JSON can be reused without rerunning every stage.
+
+The comparison stage indexes OCR rows by segment index and timestamp, so large transcript/OCR tables do not require a full OCR scan for every audio segment. When multiple OCR frame offsets are sampled, the chosen OCR text is ranked against the audio segment text instead of only choosing the longest OCR result.
+
+## Development Checks
+
+Run the fast checks before opening a PR:
+
+```bash
+ruff check .
+python3 -m pytest
+```
+
+Run fixture and native smoke checks when touching CLI, report, ffmpeg, or OCR behavior:
+
+```bash
+scripts/run_fixture_e2e.sh /tmp/burnsub-fixture-e2e
+scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
+```

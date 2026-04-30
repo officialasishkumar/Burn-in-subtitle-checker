@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .exceptions import MissingDependencyError
+from .exceptions import ConfigError, MissingDependencyError, ProcessingError
 
 
 @dataclass(slots=True)
@@ -31,7 +31,12 @@ def require_executable(name: str, install_hint: str | None = None) -> str:
     raise MissingDependencyError(f"Missing required executable '{name}'.{hint}")
 
 
-def run_command(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             args,
@@ -39,9 +44,13 @@ def run_command(args: list[str], *, cwd: Path | None = None) -> subprocess.Compl
             text=True,
             capture_output=True,
             check=False,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise MissingDependencyError(f"Missing required executable '{args[0]}'.") from exc
+    except subprocess.TimeoutExpired as exc:
+        command = " ".join(args)
+        raise ProcessingError(f"Command timed out after {timeout:g}s: {command}") from exc
 
 
 def tesseract_languages() -> set[str]:
@@ -69,7 +78,10 @@ def require_tesseract_languages(language_spec: str) -> None:
 
 
 def parse_language_spec(value: str) -> list[str]:
-    return [item.strip() for item in value.replace(",", "+").split("+") if item.strip()]
+    languages = [item.strip() for item in value.replace(",", "+").split("+") if item.strip()]
+    if not languages:
+        raise ConfigError("OCR language spec must include at least one language code")
+    return languages
 
 
 def python_module_available(module: str) -> bool:

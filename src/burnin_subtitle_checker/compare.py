@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from .models import ComparedSegment, OcrSegment, TranscriptSegment
@@ -12,6 +14,12 @@ try:  # pragma: no cover - exercised when optional dependency is installed
     from rapidfuzz import fuzz
 except Exception:  # pragma: no cover - optional import failure should not break core package
     fuzz = None
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedOcrSegment:
+    position: int
+    segment: OcrSegment
 
 
 def similarity_score(left: str, right: str) -> float:
@@ -51,18 +59,25 @@ def compare_segments(
 ) -> list[ComparedSegment]:
     transcript = list(transcript_segments)
     ocr = list(ocr_segments)
-    used_ocr_indexes: set[int] = set()
+    indexed_ocr = [_IndexedOcrSegment(position, segment) for position, segment in enumerate(ocr)]
+    ocr_by_index = _build_ocr_index(indexed_ocr)
+    ocr_by_time = sorted(indexed_ocr, key=lambda item: item.segment.timestamp)
+    ocr_timestamps = [item.segment.timestamp for item in ocr_by_time]
+    used_ocr_positions: set[int] = set()
     compared: list[ComparedSegment] = []
 
     for audio_segment in transcript:
-        subtitle_segment = _find_matching_ocr(
+        matched_ocr = _find_matching_ocr(
             audio_segment,
-            ocr,
-            used_ocr_indexes=used_ocr_indexes,
+            ocr_by_index=ocr_by_index,
+            ocr_by_time=ocr_by_time,
+            ocr_timestamps=ocr_timestamps,
+            used_ocr_positions=used_ocr_positions,
             max_alignment_gap=max_alignment_gap,
         )
-        if subtitle_segment is not None:
-            used_ocr_indexes.add(subtitle_segment.index)
+        if matched_ocr is not None:
+            used_ocr_positions.add(matched_ocr.position)
+        subtitle_segment = matched_ocr.segment if matched_ocr is not None else None
 
         subtitle_text = subtitle_segment.text if subtitle_segment else ""
         normalized_audio = normalize_text(audio_segment.text)
@@ -120,33 +135,64 @@ def count_review_rows(rows: Iterable[ComparedSegment]) -> int:
 
 def _find_matching_ocr(
     audio_segment: TranscriptSegment,
-    ocr_segments: list[OcrSegment],
     *,
-    used_ocr_indexes: set[int],
+    ocr_by_index: dict[int, list[_IndexedOcrSegment]],
+    ocr_by_time: list[_IndexedOcrSegment],
+    ocr_timestamps: list[float],
+    used_ocr_positions: set[int],
     max_alignment_gap: float,
-) -> OcrSegment | None:
-    by_index = next(
-        (
-            item
-            for item in ocr_segments
-            if item.index == audio_segment.index
-            and _within_alignment_gap(audio_segment, item, max_alignment_gap)
-        ),
-        None,
+) -> _IndexedOcrSegment | None:
+    by_index = _closest_unused_ocr(
+        audio_segment,
+        ocr_by_index.get(audio_segment.index, []),
+        used_ocr_positions=used_ocr_positions,
+        max_alignment_gap=max_alignment_gap,
     )
     if by_index is not None:
         return by_index
 
     midpoint = audio_segment.midpoint
-    candidates = [
+    left = bisect_left(ocr_timestamps, midpoint - max_alignment_gap)
+    right = bisect_right(ocr_timestamps, midpoint + max_alignment_gap)
+    return _closest_unused_ocr(
+        audio_segment,
+        ocr_by_time[left:right],
+        used_ocr_positions=used_ocr_positions,
+        max_alignment_gap=max_alignment_gap,
+    )
+
+
+def _build_ocr_index(
+    indexed_ocr: list[_IndexedOcrSegment],
+) -> dict[int, list[_IndexedOcrSegment]]:
+    by_index: dict[int, list[_IndexedOcrSegment]] = {}
+    for item in indexed_ocr:
+        by_index.setdefault(item.segment.index, []).append(item)
+    return by_index
+
+
+def _closest_unused_ocr(
+    audio_segment: TranscriptSegment,
+    candidates: Iterable[_IndexedOcrSegment],
+    *,
+    used_ocr_positions: set[int],
+    max_alignment_gap: float,
+) -> _IndexedOcrSegment | None:
+    unused_candidates = (
         item
-        for item in ocr_segments
-        if item.index not in used_ocr_indexes
-        and abs(item.timestamp - midpoint) <= max_alignment_gap
-    ]
-    if not candidates:
-        return None
-    return min(candidates, key=lambda item: abs(item.timestamp - midpoint))
+        for item in candidates
+        if item.position not in used_ocr_positions
+        and _within_alignment_gap(audio_segment, item.segment, max_alignment_gap)
+    )
+    return min(
+        unused_candidates,
+        key=lambda item: (
+            abs(item.segment.timestamp - audio_segment.midpoint),
+            abs(item.segment.index - audio_segment.index),
+            item.position,
+        ),
+        default=None,
+    )
 
 
 def _within_alignment_gap(

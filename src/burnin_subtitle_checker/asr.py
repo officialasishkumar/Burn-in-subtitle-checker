@@ -93,7 +93,7 @@ def _transcribe_with_faster_whisper(
                 index=index,
                 start=float(segment.start),
                 end=float(segment.end),
-                text=segment.text,
+                text=str(segment.text or "").strip(),
             )
             for index, segment in enumerate(segments)
         ]
@@ -105,12 +105,13 @@ def _segments_from_whisper_payload(payload: dict[str, Any]) -> list[TranscriptSe
     raw_segments = payload.get("segments") or []
     segments: list[TranscriptSegment] = []
     for index, segment in enumerate(raw_segments):
+        text = segment.get("text") or ""
         segments.append(
             TranscriptSegment(
                 index=index,
                 start=float(segment.get("start", 0.0)),
                 end=float(segment.get("end", 0.0)),
-                text=str(segment.get("text", "")).strip(),
+                text=str(text).strip(),
             )
         )
     return segments

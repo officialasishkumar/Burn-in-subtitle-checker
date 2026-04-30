@@ -45,7 +45,8 @@ def probe_media(video_path: Path) -> dict:
             "-show_streams",
             "-show_format",
             str(video_path),
-        ]
+        ],
+        timeout=60,
     )
     if completed.returncode != 0:
         raise ProcessingError(f"ffprobe failed for {video_path}: {completed.stderr.strip()}")
@@ -118,7 +119,8 @@ def capture_frame_region(
             "-vf",
             filter_expression,
             str(output_path),
-        ]
+        ],
+        timeout=120,
     )
     if completed.returncode != 0:
         quoted = " ".join(shlex.quote(arg) for arg in completed.args)

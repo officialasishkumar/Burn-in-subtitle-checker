@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from .compare import similarity_score
 from .dependencies import (
     parse_language_spec,
     require_executable,
@@ -81,7 +82,7 @@ def ocr_video_segments(
                 except ProcessingError as exc:
                     errors.append(f"{timestamp:.3f}s: {exc}")
 
-            best = _choose_best_ocr_candidate(candidates)
+            best = _choose_best_ocr_candidate(candidates, reference_text=segment.text)
             if best is None:
                 ocr_segments.append(
                     OcrSegment(
@@ -130,7 +131,8 @@ def run_tesseract(image_path: Path, *, languages: str, psm: int = 6) -> str:
             str(psm),
             "-c",
             "preserve_interword_spaces=1",
-        ]
+        ],
+        timeout=120,
     )
     if completed.returncode != 0:
         raise ProcessingError(f"Tesseract OCR failed for {image_path}: {completed.stderr.strip()}")
@@ -139,10 +141,18 @@ def run_tesseract(image_path: Path, *, languages: str, psm: int = 6) -> str:
 
 def _choose_best_ocr_candidate(
     candidates: list[tuple[str, float, Path, str | None]],
+    *,
+    reference_text: str = "",
 ) -> tuple[str, float, Path, str | None] | None:
     if not candidates:
         return None
-    return max(candidates, key=lambda item: len(normalize_text(item[0])))
+    reference = normalize_text(reference_text)
+    if not reference:
+        return max(candidates, key=lambda item: len(normalize_text(item[0])))
+    return max(
+        candidates,
+        key=lambda item: (similarity_score(reference, item[0]), len(normalize_text(item[0]))),
+    )
 
 
 def _validate_ocr_options(*, crop_bottom_percent: float, psm: int) -> None:

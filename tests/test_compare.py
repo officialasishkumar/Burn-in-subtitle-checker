@@ -99,3 +99,25 @@ def test_compare_handles_large_aligned_tables():
     assert len(rows) == size
     assert rows[0].status == "OK"
     assert rows[-1].status == "OK"
+
+
+def test_compare_includes_optional_jiwer_error_rates(monkeypatch):
+    monkeypatch.setattr("burnin_subtitle_checker.compare.jiwer_wer", lambda left, right: 0.25)
+    monkeypatch.setattr("burnin_subtitle_checker.compare.jiwer_cer", lambda left, right: 0.125)
+
+    rows = compare_segments(
+        [TranscriptSegment(index=0, start=0.0, end=1.0, text="hello world")],
+        [
+            OcrSegment(
+                index=0,
+                start=0.0,
+                end=1.0,
+                timestamp=0.5,
+                text="hello word",
+                language="eng",
+            )
+        ],
+    )
+
+    assert rows[0].word_error_rate == 0.25
+    assert rows[0].character_error_rate == 0.125

@@ -29,7 +29,8 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-similarity = ["rapidfuzz>=3.6"]
+similarity = ["rapidfuzz>=3.6", "jiwer>=3.0"]
+ocr-preprocess = ["opencv-python-headless>=4.8"]
 asr = ["openai-whisper>=20231117"]
 asr-fast = ["faster-whisper>=1.0"]
 dev = [
@@ -38,6 +39,8 @@ dev = [
 ]
 all = [
   "rapidfuzz>=3.6",
+  "jiwer>=3.0",
+  "opencv-python-headless>=4.8",
   "openai-whisper>=20231117",
   "faster-whisper>=1.0",
 ]

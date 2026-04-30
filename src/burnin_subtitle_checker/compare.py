@@ -15,6 +15,13 @@ try:  # pragma: no cover - exercised when optional dependency is installed
 except Exception:  # pragma: no cover - optional import failure should not break core package
     fuzz = None
 
+try:  # pragma: no cover - exercised when optional dependency is installed
+    from jiwer import cer as jiwer_cer
+    from jiwer import wer as jiwer_wer
+except Exception:  # pragma: no cover - optional import failure should not break core package
+    jiwer_cer = None
+    jiwer_wer = None
+
 
 @dataclass(frozen=True, slots=True)
 class _IndexedOcrSegment:
@@ -34,6 +41,29 @@ def similarity_score(left: str, right: str) -> float:
     if token_score is None:
         return char_score
     return round(min(char_score, token_score), 4)
+
+
+def word_error_rate(left: str, right: str) -> float | None:
+    return _jiwer_error_rate(left, right, metric=jiwer_wer)
+
+
+def character_error_rate(left: str, right: str) -> float | None:
+    return _jiwer_error_rate(left, right, metric=jiwer_cer)
+
+
+def _jiwer_error_rate(left: str, right: str, *, metric) -> float | None:
+    if metric is None:
+        return None
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if not left_norm and not right_norm:
+        return 0.0
+    if not left_norm or not right_norm:
+        return 1.0
+    try:
+        return round(float(metric(left_norm, right_norm)), 4)
+    except ValueError:
+        return None
 
 
 def _character_similarity(left_norm: str, right_norm: str) -> float:
@@ -83,6 +113,8 @@ def compare_segments(
         normalized_audio = normalize_text(audio_segment.text)
         normalized_subtitle = normalize_text(subtitle_text)
         score = similarity_score(audio_segment.text, subtitle_text)
+        wer = word_error_rate(audio_segment.text, subtitle_text)
+        cer = character_error_rate(audio_segment.text, subtitle_text)
         notes: list[str] = []
 
         if not normalized_audio and not normalized_subtitle:
@@ -119,6 +151,8 @@ def compare_segments(
                 normalized_audio_text=normalized_audio,
                 normalized_subtitle_text=normalized_subtitle,
                 score=score,
+                word_error_rate=wer,
+                character_error_rate=cer,
                 status=status,
                 crop_path=subtitle_segment.crop_path if subtitle_segment else None,
                 frame_path=subtitle_segment.frame_path if subtitle_segment else None,

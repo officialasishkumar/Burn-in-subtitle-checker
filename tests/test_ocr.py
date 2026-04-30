@@ -1,4 +1,6 @@
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -86,3 +88,45 @@ def test_ocr_chooses_offset_candidate_that_best_matches_audio(tmp_path, monkeypa
 
     assert rows[0].text == "hello world"
     assert rows[0].timestamp == 1.0
+
+
+def test_ocr_can_preprocess_crops_with_opencv(tmp_path, monkeypatch):
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.require_executable", lambda *args: "")
+    monkeypatch.setattr(
+        "burnin_subtitle_checker.ocr.require_tesseract_languages",
+        lambda *args: None,
+    )
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.python_module_available", lambda *args: True)
+
+    writes: list[str] = []
+    fake_cv2 = SimpleNamespace(
+        IMREAD_GRAYSCALE=0,
+        INTER_CUBIC=1,
+        ADAPTIVE_THRESH_GAUSSIAN_C=2,
+        THRESH_BINARY=3,
+        imread=lambda path, flag: object(),
+        imwrite=lambda path, image: writes.append(path) or True,
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+    def fake_capture_frame(video_path, timestamp, output_path, **kwargs):
+        output_path.write_text("image", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.capture_frame_region", fake_capture_frame)
+    monkeypatch.setattr(
+        "burnin_subtitle_checker.ocr.run_tesseract",
+        lambda *args, **kwargs: "hello",
+    )
+
+    rows = ocr_video_segments(
+        tmp_path / "video.mp4",
+        [TranscriptSegment(index=0, start=0.0, end=1.0, text="hello")],
+        output_dir=tmp_path,
+        languages="eng",
+        preprocess="grayscale",
+        upscale_factor=1.0,
+    )
+
+    assert rows[0].text == "hello"
+    assert writes

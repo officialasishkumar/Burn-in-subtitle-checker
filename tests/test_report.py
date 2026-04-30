@@ -24,4 +24,6 @@ def test_write_reports_creates_html_json_csv(tmp_path):
     assert "Burn-in Subtitle Check Report" in paths["html"].read_text(encoding="utf-8")
     payload = json.loads(paths["json"].read_text(encoding="utf-8"))
     assert payload["summary"]["ok"] == 1
-    assert "timestamp,audio_text,subtitle_text" in paths["csv"].read_text(encoding="utf-8")
+    csv_text = paths["csv"].read_text(encoding="utf-8")
+    assert "timestamp,audio_text,subtitle_text" in csv_text
+    assert "word_error_rate,character_error_rate" in csv_text

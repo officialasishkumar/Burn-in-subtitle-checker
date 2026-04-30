@@ -92,6 +92,7 @@ def collect_doctor_results(
     *,
     ocr_languages: str,
     asr_backend: str,
+    ocr_preprocess: str = "none",
     video_path: Path | None = None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
@@ -119,6 +120,15 @@ def collect_doctor_results(
             results.append(CheckResult("tesseract languages", False, str(exc)))
     else:
         results.append(CheckResult("tesseract languages", False, "tesseract executable missing"))
+
+    if ocr_preprocess != "none":
+        results.append(
+            CheckResult(
+                "opencv preprocessing",
+                python_module_available("cv2"),
+                "module: cv2",
+            )
+        )
 
     if asr_backend == "none":
         results.append(CheckResult("asr backend", True, "skipped"))

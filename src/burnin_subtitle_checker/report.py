@@ -113,6 +113,8 @@ def render_html(payload: dict[str, Any], rows: list[ComparedSegment], *, output_
             <th>Audio Text</th>
             <th>Subtitle Text</th>
             <th>Match Score</th>
+            <th>WER</th>
+            <th>CER</th>
             <th>Status</th>
             <th>Evidence</th>
             <th>Notes</th>
@@ -141,6 +143,8 @@ def _write_csv(path: Path, rows: list[ComparedSegment]) -> None:
                 "audio_text",
                 "subtitle_text",
                 "score",
+                "word_error_rate",
+                "character_error_rate",
                 "status",
                 "crop_path",
                 "notes",
@@ -157,6 +161,8 @@ def _write_csv(path: Path, rows: list[ComparedSegment]) -> None:
                     "audio_text": row.audio_text,
                     "subtitle_text": row.subtitle_text,
                     "score": f"{row.score:.4f}",
+                    "word_error_rate": _format_optional_rate(row.word_error_rate),
+                    "character_error_rate": _format_optional_rate(row.character_error_rate),
                     "status": row.status,
                     "crop_path": row.crop_path or "",
                     "notes": " | ".join(row.notes),
@@ -173,10 +179,18 @@ def _render_row(row: ComparedSegment, *, output_dir: Path) -> str:
   <td>{html.escape(row.audio_text)}</td>
   <td>{html.escape(row.subtitle_text)}</td>
   <td>{row.score:.2f}</td>
+  <td>{html.escape(_format_optional_rate(row.word_error_rate, empty="n/a"))}</td>
+  <td>{html.escape(_format_optional_rate(row.character_error_rate, empty="n/a"))}</td>
   <td><span class="status">{html.escape(row.status)}</span></td>
   <td>{evidence}</td>
   <td>{notes}</td>
 </tr>"""
+
+
+def _format_optional_rate(value: float | None, *, empty: str = "") -> str:
+    if value is None:
+        return empty
+    return f"{value:.4f}"
 
 
 def _evidence_link(crop_path: str | None, *, output_dir: Path) -> str:

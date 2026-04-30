@@ -42,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="Check native tools, OCR packs, and ASR backend.")
     doctor.add_argument("--ocr-languages", default="hin+kan+eng", help="Tesseract language spec.")
     doctor.add_argument(
+        "--ocr-preprocess",
+        default="none",
+        choices=["none", "grayscale", "threshold"],
+        help="Optional OpenCV OCR crop preprocessing mode to validate.",
+    )
+    doctor.add_argument(
         "--asr-backend",
         default="whisper",
         choices=["whisper", "faster-whisper", "none"],
@@ -160,6 +166,18 @@ def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
         help="Tesseract page segmentation mode.",
     )
     parser.add_argument(
+        "--ocr-preprocess",
+        default="none",
+        choices=["none", "grayscale", "threshold"],
+        help="Optional OpenCV preprocessing for OCR crops.",
+    )
+    parser.add_argument(
+        "--ocr-upscale-factor",
+        type=float,
+        default=2.0,
+        help="Scale factor used before OCR when --ocr-preprocess is enabled.",
+    )
+    parser.add_argument(
         "--save-artifacts",
         action="store_true",
         help="Keep OCR crops and link them from the HTML report.",
@@ -169,6 +187,7 @@ def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
 def cmd_doctor(args: argparse.Namespace) -> int:
     results = collect_doctor_results(
         ocr_languages=args.ocr_languages,
+        ocr_preprocess=args.ocr_preprocess,
         asr_backend=args.asr_backend,
         video_path=args.video,
     )
@@ -269,6 +288,8 @@ def _run_ocr(args: argparse.Namespace, transcript_segments: list, output_dir: Pa
         crop_box=parse_crop_box(args.crop_box),
         frame_offsets=parse_frame_offsets(args.frame_offsets),
         psm=args.tesseract_psm,
+        preprocess=args.ocr_preprocess,
+        upscale_factor=args.ocr_upscale_factor,
         save_artifacts=args.save_artifacts,
     )
 
@@ -284,6 +305,8 @@ def _write_cli_reports(
         "crop_bottom_percent": getattr(args, "crop_bottom_percent", None),
         "crop_box": getattr(args, "crop_box", None),
         "frame_offsets": getattr(args, "frame_offsets", None),
+        "ocr_preprocess": getattr(args, "ocr_preprocess", None),
+        "ocr_upscale_factor": getattr(args, "ocr_upscale_factor", None),
         "asr_backend": getattr(args, "asr_backend", None),
         "asr_model": getattr(args, "asr_model", None),
         "asr_language": getattr(args, "asr_language", None),

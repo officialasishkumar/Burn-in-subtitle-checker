@@ -38,6 +38,12 @@ If you prefer faster-whisper:
 python -m pip install -e ".[asr-fast,similarity]"
 ```
 
+Optional OCR preprocessing uses OpenCV to upscale, grayscale, and threshold subtitle crops before Tesseract:
+
+```bash
+python -m pip install -e ".[ocr-preprocess]"
+```
+
 ## Quick Start
 
 Check the local machine first:
@@ -85,6 +91,8 @@ burnsub check input.mp4 \
 - `--crop-bottom-percent 15`: OCR the bottom 15% of the frame.
 - `--crop-box x,y,w,h`: use an explicit pixel crop box instead.
 - `--frame-offsets 0,-0.25,0.25`: OCR multiple nearby frames and keep the strongest text.
+- `--ocr-preprocess threshold`: use OpenCV preprocessing before Tesseract.
+- `--ocr-upscale-factor 2`: upscale OCR crops before preprocessing.
 - `--threshold 0.75`: rows below this score are marked `REVIEW`.
 - `--save-artifacts`: preserve OCR crops for report links and debugging.
 - `--fail-on-mismatch`: return exit code `1` when review rows are found.
@@ -115,6 +123,8 @@ Burned-in subtitle OCR is sensitive to font, contrast, resolution, compression, 
 For long videos, prefer the split-stage workflow so transcript and OCR JSON can be reused without rerunning every stage.
 
 The comparison stage indexes OCR rows by segment index and timestamp, so large transcript/OCR tables do not require a full OCR scan for every audio segment. When multiple OCR frame offsets are sampled, the chosen OCR text is ranked against the audio segment text instead of only choosing the longest OCR result.
+
+If Tesseract struggles on compressed or low-contrast subtitles, install `.[ocr-preprocess]` and try `--ocr-preprocess threshold --ocr-upscale-factor 2`. Reports include optional jiwer-backed word error rate and character error rate fields when `.[similarity]` is installed, which gives reviewers a second signal beyond the fuzzy match score.
 
 ## Development Checks
 

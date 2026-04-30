@@ -51,6 +51,8 @@ class ComparedSegment:
     normalized_subtitle_text: str
     score: float
     status: str
+    word_error_rate: float | None = None
+    character_error_rate: float | None = None
     crop_path: str | None = None
     frame_path: str | None = None
     notes: list[str] = field(default_factory=list)

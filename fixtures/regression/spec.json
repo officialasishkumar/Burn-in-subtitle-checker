@@ -1,0 +1,70 @@
+{
+  "description": "Regression scenarios for end-to-end mismatch detection. Each segment is 2 seconds long and adjacent so the ffmpeg concat demuxer keeps the burned-in text aligned with the transcript timing.",
+  "video": {
+    "width": 1280,
+    "height": 720,
+    "fps": 25,
+    "background": "#000000",
+    "text_color": "#ffffff",
+    "font_size": 64,
+    "audio_frequency": 440
+  },
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.0,
+      "audio_text": "hello world",
+      "burn_text": "hello world",
+      "expected_status": "OK"
+    },
+    {
+      "start": 2.0,
+      "end": 4.0,
+      "audio_text": "good morning",
+      "burn_text": "good morning",
+      "expected_status": "OK"
+    },
+    {
+      "start": 4.0,
+      "end": 6.0,
+      "audio_text": "the quick brown fox",
+      "burn_text": "the quick brown dog",
+      "expected_status": "REVIEW"
+    },
+    {
+      "start": 6.0,
+      "end": 8.0,
+      "audio_text": "see you tomorrow",
+      "burn_text": "totally different copy",
+      "expected_status": "REVIEW"
+    },
+    {
+      "start": 8.0,
+      "end": 10.0,
+      "audio_text": "subtitle missing on purpose",
+      "burn_text": "",
+      "expected_status": "NO_SUBTITLE"
+    },
+    {
+      "start": 10.0,
+      "end": 12.0,
+      "audio_text": "open source matters",
+      "burn_text": "open source matters",
+      "expected_status": "OK"
+    },
+    {
+      "start": 12.0,
+      "end": 14.0,
+      "audio_text": "we ship on friday",
+      "burn_text": "we ship on monday",
+      "expected_status": "REVIEW"
+    },
+    {
+      "start": 14.0,
+      "end": 16.0,
+      "audio_text": "tests catch regressions early",
+      "burn_text": "tests catch regressions early",
+      "expected_status": "OK"
+    }
+  ]
+}

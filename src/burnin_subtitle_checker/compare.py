@@ -313,18 +313,15 @@ def _collect_reference_text(
     references: list[ReferenceWindow],
     segment: TranscriptSegment,
 ) -> str:
-    starts = [item.start for item in references]
-    ends_threshold = segment.end + 0.25
-    starts_threshold = segment.start - 0.25
-    left = bisect_left(starts, starts_threshold) if starts else 0
-    if left > 0:
-        left -= 1  # also consider the cue starting just before
-    pieces: list[str] = []
-    for item in references[left:]:
-        if item.start > ends_threshold:
-            break
-        if item.end < starts_threshold:
-            continue
-        if item.text:
-            pieces.append(item.text)
-    return " ".join(piece.strip() for piece in pieces if piece.strip()).strip()
+    """Pick the SRT cue with the largest overlap with this audio segment."""
+
+    best_cue: ReferenceWindow | None = None
+    best_overlap = 0.0
+    for cue in references:
+        overlap = min(cue.end, segment.end) - max(cue.start, segment.start)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_cue = cue
+    if best_cue is None or best_overlap <= 0:
+        return ""
+    return best_cue.text.strip()

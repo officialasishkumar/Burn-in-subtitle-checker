@@ -67,6 +67,30 @@ def test_compare_with_reference_window_marks_subtitle_drift():
     assert any("reference" in note.lower() for note in rows[0].notes)
 
 
+def test_compare_picks_single_best_overlap_reference_cue():
+    transcript = [TranscriptSegment(index=0, start=10.0, end=12.0, text="hello world")]
+    ocr = [
+        OcrSegment(
+            index=0,
+            start=10.0,
+            end=12.0,
+            timestamp=11.0,
+            text="hello world",
+            language="eng",
+        )
+    ]
+    reference_windows = [
+        ReferenceWindow(start=8.0, end=10.0, text="adjacent earlier cue"),
+        ReferenceWindow(start=10.0, end=12.0, text="hello world"),
+        ReferenceWindow(start=12.0, end=14.0, text="adjacent later cue"),
+    ]
+
+    rows = compare_segments(transcript, ocr, reference_windows=reference_windows)
+
+    assert rows[0].reference_text == "hello world"
+    assert rows[0].status == "OK"
+
+
 def test_compare_records_composite_score_field():
     transcript = [TranscriptSegment(index=0, start=0.0, end=1.0, text="hello world")]
     ocr = [

@@ -38,6 +38,9 @@ jobs:
       - name: Install package
         run: |
           python -m pip install -U pip
-          python -m pip install -e ".[similarity]"
+          python -m pip install -e ".[dev,similarity]"
+          python -m pip install Pillow
       - name: Run native smoke test
         run: PYTHON=python scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
+      - name: Run end-to-end regression pipeline test
+        run: pytest -q tests/test_regression_pipeline.py

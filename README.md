@@ -161,3 +161,22 @@ Run fixture and native smoke checks when touching CLI, report, ffmpeg, or OCR be
 scripts/run_fixture_e2e.sh /tmp/burnsub-fixture-e2e
 scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
 ```
+
+End-to-end regression test (renders a real video with deliberate burned-in mismatches via Pillow + ffmpeg, runs the full pipeline, and asserts each segment's status). Requires Pillow, ffmpeg, and Tesseract with the `eng` pack:
+
+```bash
+pytest -q tests/test_regression_pipeline.py
+```
+
+The fixture spec lives in `fixtures/regression/spec.json`; you can edit it to add new mismatch scenarios. To inspect the bundle that powers the test:
+
+```bash
+python scripts/build_regression_fixture.py /tmp/burnsub-regression
+burnsub check /tmp/burnsub-regression/video.mp4 \
+  --transcript-json /tmp/burnsub-regression/transcript.json \
+  --reference-srt /tmp/burnsub-regression/reference.srt \
+  --output-dir /tmp/burnsub-regression/report \
+  --ocr-languages eng --workers 4 \
+  --threshold 0.75 --wer-threshold 0.2
+open /tmp/burnsub-regression/report/report.html
+```

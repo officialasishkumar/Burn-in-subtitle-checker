@@ -7,8 +7,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .compare import ReferenceWindow
 from .exceptions import ConfigError
 from .models import OcrSegment, TranscriptSegment, ocr_from_mapping, transcript_from_mapping
+from .srt import load_reference_srt
 
 
 def read_json(path: Path) -> Any:
@@ -75,3 +77,11 @@ def ocr_payload(segments: Iterable[OcrSegment], source: str | None = None) -> di
         "source": source,
         "segments": [segment.to_dict() for segment in segments],
     }
+
+
+def load_reference_windows(path: Path) -> list[ReferenceWindow]:
+    cues = load_reference_srt(path)
+    return [
+        ReferenceWindow(start=cue.start, end=cue.end, text=cue.text)
+        for cue in cues
+    ]

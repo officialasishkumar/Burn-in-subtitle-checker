@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .asr import transcribe_video
-from .compare import compare_segments, count_review_rows
+from .compare import ReferenceWindow, compare_segments, count_review_rows
 from .dependencies import collect_doctor_results
 from .exceptions import BurnSubError, ConfigError
-from .io import load_ocr, load_transcript, ocr_payload, transcript_payload, write_json
-from .media import ensure_audio_stream, parse_crop_box, validate_video_path
+from .io import (
+    load_ocr,
+    load_reference_windows,
+    load_transcript,
+    ocr_payload,
+    transcript_payload,
+    write_json,
+)
+from .media import (
+    detect_subtitle_band,
+    ensure_audio_stream,
+    media_duration_seconds,
+    parse_crop_box,
+    validate_video_path,
+)
 from .ocr import ocr_video_segments, parse_frame_offsets
+from .progress import ProgressReporter
 from .report import write_reports
 
 
@@ -37,10 +52,24 @@ def build_parser() -> argparse.ArgumentParser:
         description="Flag mismatches between audio dialogue and burned-in subtitles.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress reporting on stderr.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor", help="Check native tools, OCR packs, and ASR backend.")
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check native tools, OCR packs, and ASR backend.",
+    )
     doctor.add_argument("--ocr-languages", default="hin+kan+eng", help="Tesseract language spec.")
+    doctor.add_argument(
+        "--ocr-engine",
+        default="tesseract",
+        choices=["tesseract", "easyocr"],
+        help="OCR engine to validate.",
+    )
     doctor.add_argument(
         "--ocr-preprocess",
         default="none",
@@ -102,6 +131,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("--threshold", type=float, default=0.75, help="Mismatch threshold.")
     compare.add_argument(
+        "--wer-threshold",
+        type=float,
+        default=None,
+        help="Optional WER threshold; rows above this are flagged even when score passes.",
+    )
+    compare.add_argument(
+        "--reference-srt",
+        type=Path,
+        default=None,
+        help="Optional reference SRT compared against both audio and OCR text.",
+    )
+    compare.add_argument(
         "--formats",
         default="html,json,csv",
         help="Comma-separated report formats.",
@@ -125,6 +166,18 @@ def _add_common_pipeline_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--threshold", type=float, default=0.75, help="Mismatch threshold.")
     parser.add_argument(
+        "--wer-threshold",
+        type=float,
+        default=None,
+        help="Optional WER threshold; rows above this are flagged even when score passes.",
+    )
+    parser.add_argument(
+        "--reference-srt",
+        type=Path,
+        default=None,
+        help="Optional reference SRT compared against both audio and OCR text.",
+    )
+    parser.add_argument(
         "--formats",
         default="html,json,csv",
         help="Comma-separated report formats.",
@@ -143,10 +196,37 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--asr-model", default="base", help="Whisper model name.")
     parser.add_argument("--asr-language", default="auto", help="ASR language code, or auto.")
     parser.add_argument("--device", default="auto", help="ASR device: auto, cpu, cuda, etc.")
+    parser.add_argument(
+        "--asr-vad",
+        action="store_true",
+        help="Enable VAD on faster-whisper to skip silent stretches.",
+    )
+    parser.add_argument(
+        "--asr-no-speech-threshold",
+        type=float,
+        default=0.6,
+        help="Drop ASR segments whose no-speech probability exceeds this value.",
+    )
+    parser.add_argument(
+        "--asr-keep-hallucinations",
+        action="store_true",
+        help="Keep Whisper hallucination phrases (defaults to dropping them).",
+    )
+    parser.add_argument(
+        "--asr-initial-prompt",
+        default=None,
+        help="Optional initial prompt passed to the ASR backend.",
+    )
 
 
 def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ocr-languages", default="hin+kan+eng", help="Tesseract languages.")
+    parser.add_argument(
+        "--ocr-engine",
+        default="tesseract",
+        choices=["tesseract", "easyocr"],
+        help="OCR engine to use for subtitle crops.",
+    )
     parser.add_argument(
         "--crop-bottom-percent",
         type=float,
@@ -154,6 +234,18 @@ def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
         help="Bottom-frame percentage to OCR when --crop-box is not provided.",
     )
     parser.add_argument("--crop-box", help="Explicit OCR crop box as x,y,w,h pixels.")
+    parser.add_argument(
+        "--crop-mode",
+        default="bottom",
+        choices=["bottom", "auto"],
+        help="Use 'auto' for adaptive subtitle band detection (requires opencv).",
+    )
+    parser.add_argument(
+        "--crop-detection-samples",
+        type=int,
+        default=8,
+        help="Number of evenly spaced frames sampled when --crop-mode auto is used.",
+    )
     parser.add_argument(
         "--frame-offsets",
         default="0",
@@ -182,11 +274,23 @@ def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Keep OCR crops and link them from the HTML report.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_default_worker_count(),
+        help="Worker threads for OCR (default: min(8, CPU count)).",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse OCR checkpoint at <output-dir>/ocr.partial.jsonl when present.",
+    )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     results = collect_doctor_results(
         ocr_languages=args.ocr_languages,
+        ocr_engine=args.ocr_engine,
         ocr_preprocess=args.ocr_preprocess,
         asr_backend=args.asr_backend,
         video_path=args.video,
@@ -200,6 +304,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     _validate_threshold(args.threshold)
+    _validate_optional_threshold(args.wer_threshold, name="--wer-threshold")
     validate_video_path(args.video)
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -208,12 +313,17 @@ def cmd_check(args: argparse.Namespace) -> int:
         transcript_segments = load_transcript(args.transcript_json)
     else:
         ensure_audio_stream(args.video)
+        _emit(args, "Transcribing audio...")
         transcript_segments = transcribe_video(
             args.video,
             backend=args.asr_backend,
             model_name=args.asr_model,
             language=args.asr_language,
             device=args.device,
+            vad=args.asr_vad,
+            no_speech_threshold=args.asr_no_speech_threshold,
+            drop_hallucinations=not args.asr_keep_hallucinations,
+            initial_prompt=args.asr_initial_prompt,
         )
         write_json(
             output_dir / "transcript.json",
@@ -226,7 +336,14 @@ def cmd_check(args: argparse.Namespace) -> int:
         ocr_segments = _run_ocr(args, transcript_segments, output_dir)
         write_json(output_dir / "ocr.json", ocr_payload(ocr_segments, str(args.video)))
 
-    rows = compare_segments(transcript_segments, ocr_segments, threshold=args.threshold)
+    references = _load_reference(args)
+    rows = compare_segments(
+        transcript_segments,
+        ocr_segments,
+        threshold=args.threshold,
+        wer_threshold=args.wer_threshold,
+        reference_windows=references,
+    )
     paths = _write_cli_reports(args, rows, source_video=str(args.video))
     _print_report_summary(rows, paths)
     if args.fail_on_mismatch and count_review_rows(rows) > 0:
@@ -243,6 +360,10 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         model_name=args.asr_model,
         language=args.asr_language,
         device=args.device,
+        vad=args.asr_vad,
+        no_speech_threshold=args.asr_no_speech_threshold,
+        drop_hallucinations=not args.asr_keep_hallucinations,
+        initial_prompt=args.asr_initial_prompt,
     )
     write_json(args.output, transcript_payload(segments, str(args.video)))
     print(f"Wrote transcript JSON: {args.output}")
@@ -261,9 +382,17 @@ def cmd_ocr(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     _validate_threshold(args.threshold)
+    _validate_optional_threshold(args.wer_threshold, name="--wer-threshold")
     transcript_segments = load_transcript(args.transcript_json)
     ocr_segments = load_ocr(args.ocr_json)
-    rows = compare_segments(transcript_segments, ocr_segments, threshold=args.threshold)
+    references = _load_reference(args)
+    rows = compare_segments(
+        transcript_segments,
+        ocr_segments,
+        threshold=args.threshold,
+        wer_threshold=args.wer_threshold,
+        reference_windows=references,
+    )
     paths = write_reports(
         rows,
         output_dir=args.output_dir,
@@ -279,19 +408,76 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _run_ocr(args: argparse.Namespace, transcript_segments: list, output_dir: Path):
-    return ocr_video_segments(
-        args.video,
-        transcript_segments,
-        output_dir=output_dir,
-        languages=args.ocr_languages,
-        crop_bottom_percent=args.crop_bottom_percent,
-        crop_box=parse_crop_box(args.crop_box),
-        frame_offsets=parse_frame_offsets(args.frame_offsets),
-        psm=args.tesseract_psm,
-        preprocess=args.ocr_preprocess,
-        upscale_factor=args.ocr_upscale_factor,
-        save_artifacts=args.save_artifacts,
-    )
+    crop_box = parse_crop_box(args.crop_box)
+    if crop_box is None and args.crop_mode == "auto":
+        crop_box = _auto_detect_crop_box(args)
+
+    workers = max(1, int(getattr(args, "workers", 1)))
+    checkpoint_path: Path | None = None
+    resume = bool(getattr(args, "resume", False))
+    if args.command in {"check", "ocr"}:
+        checkpoint_path = output_dir / "ocr.partial.jsonl"
+        if not resume and checkpoint_path.exists():
+            checkpoint_path.unlink()
+
+    progress = _build_progress(args, total=len(transcript_segments), label="ocr")
+    try:
+        return ocr_video_segments(
+            args.video,
+            transcript_segments,
+            output_dir=output_dir,
+            languages=args.ocr_languages,
+            crop_bottom_percent=args.crop_bottom_percent,
+            crop_box=crop_box,
+            frame_offsets=parse_frame_offsets(args.frame_offsets),
+            psm=args.tesseract_psm,
+            preprocess=args.ocr_preprocess,
+            upscale_factor=args.ocr_upscale_factor,
+            save_artifacts=args.save_artifacts,
+            engine=args.ocr_engine,
+            workers=workers,
+            checkpoint_path=checkpoint_path,
+            resume=resume,
+            progress=progress,
+        )
+    finally:
+        if progress is not None:
+            progress.finish()
+
+
+def _auto_detect_crop_box(args: argparse.Namespace) -> tuple[int, int, int, int] | None:
+    duration = media_duration_seconds(args.video) or 0.0
+    sample_count = max(2, int(getattr(args, "crop_detection_samples", 8)))
+    if duration <= 0:
+        timestamps = [float(i) for i in range(sample_count)]
+    else:
+        step = duration / (sample_count + 1)
+        timestamps = [round(step * (index + 1), 3) for index in range(sample_count)]
+    return detect_subtitle_band(args.video, sample_timestamps=timestamps)
+
+
+def _build_progress(
+    args: argparse.Namespace,
+    *,
+    total: int,
+    label: str,
+) -> ProgressReporter | None:
+    if total <= 0:
+        return None
+    quiet = bool(getattr(args, "quiet", False))
+    return ProgressReporter(total=total, label=label, enabled=not quiet)
+
+
+def _emit(args: argparse.Namespace, message: str) -> None:
+    if not getattr(args, "quiet", False):
+        print(message, file=sys.stderr)
+
+
+def _load_reference(args: argparse.Namespace) -> list[ReferenceWindow] | None:
+    path: Path | None = getattr(args, "reference_srt", None)
+    if path is None:
+        return None
+    return load_reference_windows(path)
 
 
 def _write_cli_reports(
@@ -301,7 +487,9 @@ def _write_cli_reports(
     source_video: str | None,
 ) -> dict[str, Path]:
     config: dict[str, Any] = {
+        "ocr_engine": getattr(args, "ocr_engine", None),
         "ocr_languages": getattr(args, "ocr_languages", None),
+        "crop_mode": getattr(args, "crop_mode", None),
         "crop_bottom_percent": getattr(args, "crop_bottom_percent", None),
         "crop_box": getattr(args, "crop_box", None),
         "frame_offsets": getattr(args, "frame_offsets", None),
@@ -310,6 +498,10 @@ def _write_cli_reports(
         "asr_backend": getattr(args, "asr_backend", None),
         "asr_model": getattr(args, "asr_model", None),
         "asr_language": getattr(args, "asr_language", None),
+        "asr_vad": getattr(args, "asr_vad", None),
+        "workers": getattr(args, "workers", None),
+        "wer_threshold": getattr(args, "wer_threshold", None),
+        "reference_srt": str(getattr(args, "reference_srt", None) or ""),
     }
     return write_reports(
         rows,
@@ -334,11 +526,23 @@ def _validate_threshold(value: float) -> None:
         raise ConfigError("--threshold must be between 0 and 1")
 
 
+def _validate_optional_threshold(value: float | None, *, name: str) -> None:
+    if value is None:
+        return
+    if not 0 <= value <= 1:
+        raise ConfigError(f"{name} must be between 0 and 1")
+
+
 def _print_report_summary(rows: list, paths: dict[str, Path]) -> None:
     review_count = count_review_rows(rows)
     print(f"Compared {len(rows)} segment(s); {review_count} need review.")
     for fmt, path in sorted(paths.items()):
         print(f"Wrote {fmt.upper()} report: {path}")
+
+
+def _default_worker_count() -> int:
+    cpu = os.cpu_count() or 1
+    return max(1, min(8, cpu))
 
 
 if __name__ == "__main__":

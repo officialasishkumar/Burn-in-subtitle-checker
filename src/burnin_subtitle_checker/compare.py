@@ -29,6 +29,17 @@ class _IndexedOcrSegment:
     segment: OcrSegment
 
 
+@dataclass(frozen=True, slots=True)
+class ReferenceWindow:
+    start: float
+    end: float
+    text: str
+
+    @property
+    def midpoint(self) -> float:
+        return (self.start + self.end) / 2
+
+
 def similarity_score(left: str, right: str) -> float:
     left_norm = normalize_text(left)
     right_norm = normalize_text(right)
@@ -41,6 +52,21 @@ def similarity_score(left: str, right: str) -> float:
     if token_score is None:
         return char_score
     return round(min(char_score, token_score), 4)
+
+
+def composite_similarity(left: str, right: str) -> float:
+    """Reviewer-friendly blend of character, token, and partial similarity."""
+
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if not left_norm and not right_norm:
+        return 1.0
+    if not left_norm or not right_norm:
+        return 0.0
+    char_score = _character_similarity(left_norm, right_norm)
+    token_score = _token_similarity(left_norm, right_norm) or char_score
+    partial_score = _partial_similarity(left_norm, right_norm)
+    return round(0.45 * char_score + 0.35 * token_score + 0.20 * partial_score, 4)
 
 
 def word_error_rate(left: str, right: str) -> float | None:
@@ -80,12 +106,25 @@ def _token_similarity(left_norm: str, right_norm: str) -> float | None:
     return round(SequenceMatcher(None, left_tokens, right_tokens).ratio(), 4)
 
 
+def _partial_similarity(left_norm: str, right_norm: str) -> float:
+    if fuzz is not None:
+        return round(float(fuzz.partial_ratio(left_norm, right_norm)) / 100, 4)
+    matcher = SequenceMatcher(None, left_norm, right_norm)
+    match = matcher.find_longest_match(0, len(left_norm), 0, len(right_norm))
+    if not match.size:
+        return 0.0
+    smaller = min(len(left_norm), len(right_norm))
+    return round(match.size / smaller, 4)
+
+
 def compare_segments(
     transcript_segments: Iterable[TranscriptSegment],
     ocr_segments: Iterable[OcrSegment],
     *,
     threshold: float = 0.75,
     max_alignment_gap: float = 1.5,
+    wer_threshold: float | None = None,
+    reference_windows: Iterable[ReferenceWindow] | None = None,
 ) -> list[ComparedSegment]:
     transcript = list(transcript_segments)
     ocr = list(ocr_segments)
@@ -94,6 +133,8 @@ def compare_segments(
     ocr_by_time = sorted(indexed_ocr, key=lambda item: item.segment.timestamp)
     ocr_timestamps = [item.segment.timestamp for item in ocr_by_time]
     used_ocr_positions: set[int] = set()
+    references = list(reference_windows or [])
+    reference_starts = sorted(references, key=lambda item: item.start)
     compared: list[ComparedSegment] = []
 
     for audio_segment in transcript:
@@ -113,9 +154,20 @@ def compare_segments(
         normalized_audio = normalize_text(audio_segment.text)
         normalized_subtitle = normalize_text(subtitle_text)
         score = similarity_score(audio_segment.text, subtitle_text)
+        composite = composite_similarity(audio_segment.text, subtitle_text)
         wer = word_error_rate(audio_segment.text, subtitle_text)
         cer = character_error_rate(audio_segment.text, subtitle_text)
         notes: list[str] = []
+
+        reference_text: str | None = None
+        ref_audio_score: float | None = None
+        ref_subtitle_score: float | None = None
+        if reference_starts:
+            collected = _collect_reference_text(reference_starts, audio_segment)
+            if collected:
+                reference_text = collected
+                ref_audio_score = composite_similarity(audio_segment.text, reference_text)
+                ref_subtitle_score = composite_similarity(subtitle_text, reference_text)
 
         if not normalized_audio and not normalized_subtitle:
             status = "NO_TEXT"
@@ -126,10 +178,26 @@ def compare_segments(
         elif not normalized_subtitle:
             status = "NO_SUBTITLE"
             notes.append("OCR subtitle text is empty after normalization.")
-        elif score >= threshold:
+        elif score >= threshold and (
+            wer_threshold is None or wer is None or wer <= wer_threshold
+        ):
             status = "OK"
         else:
             status = "REVIEW"
+            if score >= threshold and wer_threshold is not None and wer is not None:
+                notes.append(
+                    f"Word error rate {wer:.2f} exceeds threshold {wer_threshold:.2f}."
+                )
+
+        if reference_text is not None and status == "OK":
+            if ref_subtitle_score is not None and ref_subtitle_score < threshold:
+                status = "REVIEW"
+                notes.append(
+                    "Subtitle does not match the reference SRT for this window."
+                )
+            elif ref_audio_score is not None and ref_audio_score < threshold:
+                status = "REVIEW"
+                notes.append("Audio transcript drifts from the reference SRT for this window.")
 
         if subtitle_segment and subtitle_segment.errors:
             notes.extend(subtitle_segment.errors)
@@ -151,12 +219,16 @@ def compare_segments(
                 normalized_audio_text=normalized_audio,
                 normalized_subtitle_text=normalized_subtitle,
                 score=score,
+                composite_score=composite,
                 word_error_rate=wer,
                 character_error_rate=cer,
                 status=status,
                 crop_path=subtitle_segment.crop_path if subtitle_segment else None,
                 frame_path=subtitle_segment.frame_path if subtitle_segment else None,
                 notes=notes,
+                reference_text=reference_text,
+                reference_vs_audio_score=ref_audio_score,
+                reference_vs_subtitle_score=ref_subtitle_score,
             )
         )
 
@@ -235,3 +307,24 @@ def _within_alignment_gap(
     max_alignment_gap: float,
 ) -> bool:
     return abs(ocr_segment.timestamp - audio_segment.midpoint) <= max_alignment_gap
+
+
+def _collect_reference_text(
+    references: list[ReferenceWindow],
+    segment: TranscriptSegment,
+) -> str:
+    starts = [item.start for item in references]
+    ends_threshold = segment.end + 0.25
+    starts_threshold = segment.start - 0.25
+    left = bisect_left(starts, starts_threshold) if starts else 0
+    if left > 0:
+        left -= 1  # also consider the cue starting just before
+    pieces: list[str] = []
+    for item in references[left:]:
+        if item.start > ends_threshold:
+            break
+        if item.end < starts_threshold:
+            continue
+        if item.text:
+            pieces.append(item.text)
+    return " ".join(piece.strip() for piece in pieces if piece.strip()).strip()

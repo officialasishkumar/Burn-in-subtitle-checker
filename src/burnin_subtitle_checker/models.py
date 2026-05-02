@@ -13,6 +13,8 @@ class TranscriptSegment:
     start: float
     end: float
     text: str
+    confidence: float | None = None
+    no_speech_prob: float | None = None
 
     @property
     def midpoint(self) -> float:
@@ -34,6 +36,7 @@ class OcrSegment:
     frame_path: str | None = None
     sampled_timestamps: list[float] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    engine: str = "tesseract"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,9 +56,13 @@ class ComparedSegment:
     status: str
     word_error_rate: float | None = None
     character_error_rate: float | None = None
+    composite_score: float | None = None
     crop_path: str | None = None
     frame_path: str | None = None
     notes: list[str] = field(default_factory=list)
+    reference_text: str | None = None
+    reference_vs_audio_score: float | None = None
+    reference_vs_subtitle_score: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +73,15 @@ def _coerce_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be a number, got {value!r}") from exc
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def transcript_from_mapping(index: int, data: dict[str, Any]) -> TranscriptSegment:
@@ -79,6 +95,8 @@ def transcript_from_mapping(index: int, data: dict[str, Any]) -> TranscriptSegme
         start=start,
         end=end,
         text=str(text or "").strip(),
+        confidence=_coerce_optional_float(data.get("confidence")),
+        no_speech_prob=_coerce_optional_float(data.get("no_speech_prob")),
     )
 
 
@@ -102,6 +120,7 @@ def ocr_from_mapping(index: int, data: dict[str, Any]) -> OcrSegment:
         frame_path=_path_to_str(data.get("frame_path")),
         sampled_timestamps=[float(item) for item in sampled],
         errors=[str(item) for item in errors],
+        engine=str(data.get("engine", "tesseract")),
     )
 
 

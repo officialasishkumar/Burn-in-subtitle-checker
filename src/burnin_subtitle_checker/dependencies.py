@@ -88,23 +88,59 @@ def python_module_available(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+def cuda_available() -> tuple[bool, str]:
+    if not python_module_available("torch"):
+        return False, "torch not installed"
+    try:
+        import torch  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover - depends on torch runtime
+        return False, f"torch import failed: {exc}"
+    try:
+        if torch.cuda.is_available():
+            count = torch.cuda.device_count()
+            name = torch.cuda.get_device_name(0) if count else ""
+            return True, f"{count} device(s); first: {name}"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return True, "Apple Metal (MPS) available"
+        return False, "no CUDA / MPS device detected"
+    except Exception as exc:  # pragma: no cover - depends on torch runtime
+        return False, f"torch device probe failed: {exc}"
+
+
+def executable_version(name: str, *, args: list[str] | None = None) -> str | None:
+    path = executable_path(name)
+    if not path:
+        return None
+    try:
+        completed = run_command([path, *(args or ["-version"])], timeout=10)
+    except (MissingDependencyError, ProcessingError):
+        return None
+    text = (completed.stdout or completed.stderr or "").strip().splitlines()
+    return text[0] if text else None
+
+
 def collect_doctor_results(
     *,
     ocr_languages: str,
     asr_backend: str,
+    ocr_engine: str = "tesseract",
     ocr_preprocess: str = "none",
     video_path: Path | None = None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(CheckResult("python", True, sys.version.split()[0]))
 
-    for executable, hint in [
-        ("ffmpeg", "sudo apt install ffmpeg"),
-        ("ffprobe", "sudo apt install ffmpeg"),
-        ("tesseract", "sudo apt install tesseract-ocr"),
+    for executable, hint, version_args in [
+        ("ffmpeg", "sudo apt install ffmpeg", ["-version"]),
+        ("ffprobe", "sudo apt install ffmpeg", ["-version"]),
+        ("tesseract", "sudo apt install tesseract-ocr", ["--version"]),
     ]:
         path = executable_path(executable)
-        results.append(CheckResult(executable, bool(path), path or f"missing; {hint}"))
+        if path:
+            version = executable_version(executable, args=version_args) or path
+            results.append(CheckResult(executable, True, version))
+        else:
+            results.append(CheckResult(executable, False, f"missing; {hint}"))
 
     if executable_path("tesseract"):
         try:
@@ -120,6 +156,16 @@ def collect_doctor_results(
             results.append(CheckResult("tesseract languages", False, str(exc)))
     else:
         results.append(CheckResult("tesseract languages", False, "tesseract executable missing"))
+
+    if ocr_engine == "easyocr":
+        ok = python_module_available("easyocr")
+        results.append(
+            CheckResult(
+                "ocr engine: easyocr",
+                ok,
+                "module: easyocr" if ok else "missing; install '.[ocr-easy]'",
+            )
+        )
 
     if ocr_preprocess != "none":
         results.append(
@@ -146,6 +192,10 @@ def collect_doctor_results(
         )
     else:
         results.append(CheckResult("asr backend", False, f"unknown backend: {asr_backend}"))
+
+    has_gpu, gpu_detail = cuda_available()
+    accelerator_detail = gpu_detail if has_gpu else f"cpu only ({gpu_detail})"
+    results.append(CheckResult("accelerator", True, accelerator_detail))
 
     if video_path is not None:
         if not video_path.exists():

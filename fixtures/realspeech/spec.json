@@ -1,0 +1,60 @@
+{
+  "description": "Real-speech regression scenarios. The audio_text is read aloud by a system TTS (espeak-ng on Linux, say on macOS); the burn_text is rendered into the video frame. Mismatches are intentional so the full ASR + OCR + compare pipeline must catch them.",
+  "video": {
+    "width": 1280,
+    "height": 720,
+    "background": "#000000",
+    "text_color": "#ffffff",
+    "font_size": 56,
+    "frame_rate": 25,
+    "trailing_silence_seconds": 0.4,
+    "gap_between_segments_seconds": 0.4
+  },
+  "tts": {
+    "voice_macos": "Alex",
+    "rate_words_per_minute": 175,
+    "language_espeak": "en"
+  },
+  "segments": [
+    {
+      "audio_text": "the burned in subtitle checker is open source.",
+      "burn_text": "the burned in subtitle checker is open source.",
+      "kind": "match"
+    },
+    {
+      "audio_text": "we ship updates every friday afternoon.",
+      "burn_text": "we ship updates every monday afternoon.",
+      "kind": "single_word_swap"
+    },
+    {
+      "audio_text": "tests catch regressions before they reach users.",
+      "burn_text": "tests catch regressions before they reach users.",
+      "kind": "match"
+    },
+    {
+      "audio_text": "subtitles must match the spoken dialogue.",
+      "burn_text": "completely unrelated marketing tagline here.",
+      "kind": "wholly_different"
+    },
+    {
+      "audio_text": "this segment has no burned in subtitle on screen.",
+      "burn_text": "",
+      "kind": "blank_subtitle"
+    },
+    {
+      "audio_text": "open source quality assurance saves time.",
+      "burn_text": "open source quality assurance saves time.",
+      "kind": "match"
+    },
+    {
+      "audio_text": "the editor reviews flagged segments quickly.",
+      "burn_text": "the producer rejects flagged segments quickly.",
+      "kind": "multi_word_swap"
+    },
+    {
+      "audio_text": "thank you for trying the regression fixture.",
+      "burn_text": "thank you for trying the regression fixture.",
+      "kind": "match"
+    }
+  ]
+}

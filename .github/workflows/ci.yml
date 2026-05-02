@@ -39,8 +39,34 @@ jobs:
         run: |
           python -m pip install -U pip
           python -m pip install -e ".[dev,similarity]"
-          python -m pip install Pillow
       - name: Run native smoke test
         run: PYTHON=python scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
       - name: Run end-to-end regression pipeline test
         run: pytest -q tests/test_regression_pipeline.py
+
+  real-speech-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install native tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg tesseract-ocr tesseract-ocr-eng
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/whisper
+          key: whisper-tiny-v1
+      - name: Install package + whisper
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e ".[dev,similarity,asr]"
+      - name: Run real-speech end-to-end pipeline test
+        env:
+          BURNSUB_RUN_REAL_SPEECH: "1"
+        run: pytest -q tests/test_real_speech_pipeline.py

@@ -1,0 +1,81 @@
+{
+  "tts_backend_hint": {
+    "voice_macos": "Alex",
+    "rate_words_per_minute": 175,
+    "language_espeak": "en"
+  },
+  "segments": [
+    {
+      "index": 0,
+      "audio_text": "the burned in subtitle checker is open source.",
+      "burn_text": "the burned in subtitle checker is open source.",
+      "kind": "match",
+      "start": 0.0,
+      "end": 3.103,
+      "speech_duration": 3.103
+    },
+    {
+      "index": 1,
+      "audio_text": "we ship updates every friday afternoon.",
+      "burn_text": "we ship updates every monday afternoon.",
+      "kind": "single_word_swap",
+      "start": 3.103,
+      "end": 6.066000000000001,
+      "speech_duration": 2.963
+    },
+    {
+      "index": 2,
+      "audio_text": "tests catch regressions before they reach users.",
+      "burn_text": "tests catch regressions before they reach users.",
+      "kind": "match",
+      "start": 6.066000000000001,
+      "end": 9.106000000000002,
+      "speech_duration": 3.04
+    },
+    {
+      "index": 3,
+      "audio_text": "subtitles must match the spoken dialogue.",
+      "burn_text": "completely unrelated marketing tagline here.",
+      "kind": "wholly_different",
+      "start": 9.106000000000002,
+      "end": 12.242,
+      "speech_duration": 3.136
+    },
+    {
+      "index": 4,
+      "audio_text": "this segment has no burned in subtitle on screen.",
+      "burn_text": "",
+      "kind": "blank_subtitle",
+      "start": 12.242,
+      "end": 15.832,
+      "speech_duration": 3.59
+    },
+    {
+      "index": 5,
+      "audio_text": "open source quality assurance saves time.",
+      "burn_text": "open source quality assurance saves time.",
+      "kind": "match",
+      "start": 15.832,
+      "end": 18.834,
+      "speech_duration": 3.002
+    },
+    {
+      "index": 6,
+      "audio_text": "the editor reviews flagged segments quickly.",
+      "burn_text": "the producer rejects flagged segments quickly.",
+      "kind": "multi_word_swap",
+      "start": 18.834,
+      "end": 21.739,
+      "speech_duration": 2.905
+    },
+    {
+      "index": 7,
+      "audio_text": "thank you for trying the regression fixture.",
+      "burn_text": "thank you for trying the regression fixture.",
+      "kind": "match",
+      "start": 21.739,
+      "end": 24.775000000000002,
+      "speech_duration": 3.036
+    }
+  ]
+}

@@ -1,17 +1,19 @@
 """End-to-end regression test against a video with deliberate burned-in mismatches.
 
-This test renders ``fixtures/regression/spec.json`` into a synthetic MP4 with
-burned-in subtitles using Pillow + ffmpeg, then runs ``burnsub check`` against
-it. It asserts that each segment's status matches the ``expected_status`` field
-in the spec.
+This test runs ``burnsub check`` against the committed regression bundle in
+``fixtures/regression/bundle/`` (built from ``fixtures/regression/spec.json``
+with ``scripts/build_regression_fixture.py``) and asserts that each segment's
+status matches the ``expected_status`` field in the spec.
 
-The test is skipped automatically when ffmpeg, tesseract, or Pillow are not
-available so it does not break developer machines without those dependencies.
+Set ``BURNSUB_REBUILD_FIXTURE=1`` to regenerate the bundle from the spec into
+a tmp directory before running (useful when you have just edited the spec).
+
+The test is skipped automatically when ffmpeg or tesseract are not available
+so it does not break developer machines without those dependencies.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
@@ -24,6 +26,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_SPEC = ROOT / "fixtures" / "regression" / "spec.json"
 BUILD_SCRIPT = ROOT / "scripts" / "build_regression_fixture.py"
+BUNDLE_DIR = ROOT / "fixtures" / "regression" / "bundle"
 
 REQUIRED_BINARIES = ("ffmpeg", "ffprobe", "tesseract")
 REQUIRED_TESSERACT_LANG = "eng"
@@ -45,16 +48,11 @@ def _has_tesseract_eng() -> bool:
     return REQUIRED_TESSERACT_LANG in completed.stdout.split()
 
 
-def _has_pillow() -> bool:
-    return importlib.util.find_spec("PIL") is not None
-
-
 pytestmark = [
     pytest.mark.skipif(
         bool(_missing_binaries()),
         reason=f"Missing native binaries: {_missing_binaries()}",
     ),
-    pytest.mark.skipif(not _has_pillow(), reason="Pillow is required to render frames."),
     pytest.mark.skipif(not _has_tesseract_eng(), reason="tesseract eng pack required."),
 ]
 
@@ -62,24 +60,31 @@ pytestmark = [
 def test_regression_video_pipeline(tmp_path):
     spec = json.loads(FIXTURE_SPEC.read_text(encoding="utf-8"))
     expected_statuses = [segment["expected_status"] for segment in spec["segments"]]
-
-    bundle_dir = tmp_path / "bundle"
     report_dir = tmp_path / "report"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
-
     env = {
         **os.environ,
         "PYTHONPATH": str(ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
-    build = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT), str(bundle_dir)],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert build.returncode == 0, build.stderr
+
+    if os.environ.get("BURNSUB_REBUILD_FIXTURE") == "1":
+        bundle_dir = tmp_path / "bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        build = subprocess.run(
+            [sys.executable, str(BUILD_SCRIPT), str(bundle_dir)],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert build.returncode == 0, build.stderr
+    else:
+        bundle_dir = BUNDLE_DIR
+        if not (bundle_dir / "video.mp4").exists():
+            pytest.skip(
+                "Committed regression bundle missing; rebuild with "
+                "BURNSUB_REBUILD_FIXTURE=1 or run scripts/build_regression_fixture.py."
+            )
 
     check = subprocess.run(
         [

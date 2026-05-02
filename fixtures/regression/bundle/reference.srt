@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:02,000
+hello world
+
+2
+00:00:02,000 --> 00:00:04,000
+good morning
+
+3
+00:00:04,000 --> 00:00:06,000
+the quick brown fox
+
+4
+00:00:06,000 --> 00:00:08,000
+see you tomorrow
+
+5
+00:00:08,000 --> 00:00:10,000
+subtitle missing on purpose
+
+6
+00:00:10,000 --> 00:00:12,000
+open source matters
+
+7
+00:00:12,000 --> 00:00:14,000
+we ship on friday
+
+8
+00:00:14,000 --> 00:00:16,000
+tests catch regressions early

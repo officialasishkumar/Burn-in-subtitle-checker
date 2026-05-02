@@ -162,21 +162,32 @@ scripts/run_fixture_e2e.sh /tmp/burnsub-fixture-e2e
 scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
 ```
 
-End-to-end regression test (renders a real video with deliberate burned-in mismatches via Pillow + ffmpeg, runs the full pipeline, and asserts each segment's status). Requires Pillow, ffmpeg, and Tesseract with the `eng` pack:
+End-to-end regression tests run against committed video bundles in `fixtures/regression/bundle/` and `fixtures/realspeech/bundle/`:
 
 ```bash
+# Fast: precomputed transcript + tesseract OCR vs burned-in text
 pytest -q tests/test_regression_pipeline.py
+
+# Real Whisper ASR + tesseract OCR against burned-in TTS speech
+BURNSUB_RUN_REAL_SPEECH=1 pytest -q tests/test_real_speech_pipeline.py
 ```
 
-The fixture spec lives in `fixtures/regression/spec.json`; you can edit it to add new mismatch scenarios. To inspect the bundle that powers the test:
+Bundles are deterministic so CI does not need a TTS toolchain. To rebuild from the spec after editing it (`fixtures/regression/spec.json` / `fixtures/realspeech/spec.json`):
 
 ```bash
-python scripts/build_regression_fixture.py /tmp/burnsub-regression
-burnsub check /tmp/burnsub-regression/video.mp4 \
-  --transcript-json /tmp/burnsub-regression/transcript.json \
-  --reference-srt /tmp/burnsub-regression/reference.srt \
-  --output-dir /tmp/burnsub-regression/report \
+python scripts/build_regression_fixture.py fixtures/regression/bundle
+python scripts/build_real_speech_fixture.py fixtures/realspeech/bundle
+# Or set BURNSUB_REBUILD_FIXTURE=1 when running the test
+```
+
+To inspect the report a regression run produces:
+
+```bash
+burnsub check fixtures/regression/bundle/video.mp4 \
+  --transcript-json fixtures/regression/bundle/transcript.json \
+  --reference-srt fixtures/regression/bundle/reference.srt \
+  --output-dir reports/regression \
   --ocr-languages eng --workers 4 \
   --threshold 0.75 --wer-threshold 0.2
-open /tmp/burnsub-regression/report/report.html
+open reports/regression/report.html
 ```

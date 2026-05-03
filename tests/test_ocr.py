@@ -6,7 +6,7 @@ import pytest
 
 from burnin_subtitle_checker.exceptions import ConfigError
 from burnin_subtitle_checker.models import TranscriptSegment
-from burnin_subtitle_checker.ocr import ocr_video_segments
+from burnin_subtitle_checker.ocr import ocr_video_segments, run_tesseract
 
 
 def test_ocr_rejects_invalid_crop_percent_before_processing(tmp_path, monkeypatch):
@@ -130,3 +130,78 @@ def test_ocr_can_preprocess_crops_with_opencv(tmp_path, monkeypatch):
 
     assert rows[0].text == "hello"
     assert writes
+
+
+def test_tesseract_receives_custom_tessdata_dir(tmp_path, monkeypatch):
+    captured = {}
+    image = tmp_path / "crop.png"
+    image.write_text("image", encoding="utf-8")
+    tessdata_dir = tmp_path / "tessdata"
+    tessdata_dir.mkdir()
+
+    def fake_run_command(args, timeout):
+        captured["args"] = args
+        captured["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout=" hello \n", stderr="")
+
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.run_command", fake_run_command)
+
+    assert run_tesseract(image, languages="hin", psm=6, tessdata_dir=tessdata_dir) == "hello"
+    assert "--tessdata-dir" in captured["args"]
+    assert str(tessdata_dir) in captured["args"]
+
+
+def test_paddleocr_vl_engine_does_not_require_tesseract(tmp_path, monkeypatch):
+    def fail_require_executable(*args, **kwargs):  # pragma: no cover - should not be called
+        raise AssertionError("PaddleOCR-VL should not require tesseract")
+
+    def fake_capture_frame(video_path, timestamp, output_path, **kwargs):
+        output_path.write_text("image", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.require_executable", fail_require_executable)
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.capture_frame_region", fake_capture_frame)
+    monkeypatch.setattr(
+        "burnin_subtitle_checker.paddleocr_vl_engine.run_paddleocr_vl",
+        lambda image_path, *, languages: "नमस्ते",
+    )
+
+    rows = ocr_video_segments(
+        tmp_path / "video.mp4",
+        [TranscriptSegment(index=0, start=0.0, end=1.0, text="नमस्ते")],
+        output_dir=tmp_path,
+        languages="hin",
+        engine="paddleocr-vl",
+        save_artifacts=False,
+    )
+
+    assert rows[0].text == "नमस्ते"
+    assert rows[0].engine == "paddleocr-vl"
+
+
+def test_ai4bharat_ocr_engine_does_not_require_tesseract(tmp_path, monkeypatch):
+    def fail_require_executable(*args, **kwargs):  # pragma: no cover - should not be called
+        raise AssertionError("AI4Bharat OCR should not require tesseract")
+
+    def fake_capture_frame(video_path, timestamp, output_path, **kwargs):
+        output_path.write_text("image", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.require_executable", fail_require_executable)
+    monkeypatch.setattr("burnin_subtitle_checker.ocr.capture_frame_region", fake_capture_frame)
+    monkeypatch.setattr(
+        "burnin_subtitle_checker.ai4bharat_ocr_engine.run_ai4bharat_ocr",
+        lambda image_path, *, languages: "ನಮಸ್ಕಾರ",
+    )
+
+    rows = ocr_video_segments(
+        tmp_path / "video.mp4",
+        [TranscriptSegment(index=0, start=0.0, end=1.0, text="ನಮಸ್ಕಾರ")],
+        output_dir=tmp_path,
+        languages="kan",
+        engine="ai4bharat",
+        save_artifacts=False,
+    )
+
+    assert rows[0].text == "ನಮಸ್ಕಾರ"
+    assert rows[0].engine == "ai4bharat"

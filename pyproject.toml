@@ -32,8 +32,25 @@ dependencies = []
 similarity = ["rapidfuzz>=3.6", "jiwer>=3.0"]
 ocr-preprocess = ["opencv-python-headless>=4.8", "numpy>=1.24"]
 ocr-easy = ["easyocr>=1.7"]
+ocr-indic = ["transformers>=4.41", "torch>=2.0", "pillow>=10.0", "huggingface-hub>=0.23"]
+ocr-paddle = ["paddleocr>=3.3", "paddlepaddle>=3.0"]
 asr = ["openai-whisper>=20231117"]
 asr-fast = ["faster-whisper>=1.0"]
+asr-indic = [
+  "transformers>=4.41",
+  "torch>=2.0",
+  "torchaudio>=2.0",
+  "librosa>=0.10",
+  "soundfile>=0.12",
+]
+asr-conformer = [
+  "nemo_toolkit[asr]>=2.0",
+  "transformers>=4.41",
+  "torch>=2.0",
+  "torchaudio>=2.0",
+  "onnx>=1.20",
+  "onnxruntime>=1.20",
+]
 dev = [
   "pytest>=8.0",
   "ruff>=0.4",
@@ -45,7 +62,16 @@ all = [
   "numpy>=1.24",
   "openai-whisper>=20231117",
   "faster-whisper>=1.0",
+  "transformers>=4.41",
+  "torch>=2.0",
+  "torchaudio>=2.0",
+  "librosa>=0.10",
+  "soundfile>=0.12",
   "easyocr>=1.7",
+  "paddleocr>=3.3",
+  "paddlepaddle>=3.0",
+  "pillow>=10.0",
+  "huggingface-hub>=0.23",
 ]
 
 [project.scripts]

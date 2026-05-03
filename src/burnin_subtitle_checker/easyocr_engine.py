@@ -6,26 +6,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .backend_config import TESSERACT_TO_ISO_LANGUAGES
 from .dependencies import parse_language_spec
 from .exceptions import MissingDependencyError, ProcessingError
-
-_TESSERACT_TO_EASYOCR = {
-    "eng": "en",
-    "hin": "hi",
-    "kan": "kn",
-    "tam": "ta",
-    "tel": "te",
-    "ben": "bn",
-    "mar": "mr",
-    "guj": "gu",
-    "pan": "pa",
-    "mal": "ml",
-    "ori": "or",
-    "asm": "as",
-    "urd": "ur",
-    "san": "sa",
-    "nep": "ne",
-}
 
 _READER_LOCK = threading.Lock()
 _READER_CACHE: dict[tuple[str, ...], Any] = {}
@@ -34,7 +17,7 @@ _READER_CACHE: dict[tuple[str, ...], Any] = {}
 def map_languages(spec: str) -> list[str]:
     codes: list[str] = []
     for token in parse_language_spec(spec):
-        mapped = _TESSERACT_TO_EASYOCR.get(token, token)
+        mapped = TESSERACT_TO_ISO_LANGUAGES.get(token, token)
         if mapped not in codes:
             codes.append(mapped)
     return codes

@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .backend_config import (
+    ASR_BACKEND_MODULES,
+    ASR_INDIC_CONFORMER_BACKEND,
+    ASR_INDICWHISPER_BACKEND,
+    ASR_WHISPER_BACKEND,
+    INDIC_CONFORMER_MODEL_ID,
+    INDIC_OCR_TESSERACT_LANGUAGES,
+    INDICWHISPER_MODEL_FAMILY,
+    OCR_ENGINE_MODULES,
+    OCR_TESSERACT_ENGINE,
+    candidate_indic_tessdata_dirs,
+    indic_tessdata_install_command,
+)
 from .exceptions import ConfigError, MissingDependencyError, ProcessingError
 
 
@@ -53,9 +67,12 @@ def run_command(
         raise ProcessingError(f"Command timed out after {timeout:g}s: {command}") from exc
 
 
-def tesseract_languages() -> set[str]:
+def tesseract_languages(tessdata_dir: Path | str | None = None) -> set[str]:
     require_executable("tesseract", "sudo apt install tesseract-ocr")
-    completed = run_command(["tesseract", "--list-langs"])
+    command = ["tesseract", "--list-langs"]
+    if tessdata_dir is not None:
+        command.extend(["--tessdata-dir", str(tessdata_dir)])
+    completed = run_command(command)
     if completed.returncode != 0:
         raise MissingDependencyError(
             f"Could not list Tesseract languages: {completed.stderr.strip()}"
@@ -64,13 +81,18 @@ def tesseract_languages() -> set[str]:
     return {line.strip() for line in lines[1:] if line.strip()}
 
 
-def require_tesseract_languages(language_spec: str) -> None:
+def require_tesseract_languages(
+    language_spec: str,
+    *,
+    tessdata_dir: Path | str | None = None,
+) -> None:
     requested = parse_language_spec(language_spec)
-    installed = tesseract_languages()
+    installed = tesseract_languages(tessdata_dir)
     missing = [lang for lang in requested if lang not in installed]
     if missing:
+        location = f" in {tessdata_dir}" if tessdata_dir is not None else ""
         raise MissingDependencyError(
-            "Missing Tesseract language pack(s): "
+            f"Missing Tesseract language pack(s){location}: "
             + ", ".join(missing)
             + ". Install with: sudo apt install "
             + " ".join(f"tesseract-ocr-{lang}" for lang in missing)
@@ -85,7 +107,10 @@ def parse_language_spec(value: str) -> list[str]:
 
 
 def python_module_available(module: str) -> bool:
-    return importlib.util.find_spec(module) is not None
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def cuda_available() -> tuple[bool, str]:
@@ -119,6 +144,49 @@ def executable_version(name: str, *, args: list[str] | None = None) -> str | Non
     return text[0] if text else None
 
 
+def traineddata_languages_in_dir(path: Path) -> set[str]:
+    if not path.exists() or not path.is_dir():
+        return set()
+    return {item.stem for item in path.glob("*.traineddata") if item.is_file()}
+
+
+def find_indic_tessdata_dir(language_spec: str) -> Path | None:
+    requested = set(parse_language_spec(language_spec))
+    for path in candidate_indic_tessdata_dirs():
+        installed = traineddata_languages_in_dir(path)
+        if requested.issubset(installed) and installed.intersection(INDIC_OCR_TESSERACT_LANGUAGES):
+            return path
+    return None
+
+
+def indic_tessdata_detail(language_spec: str) -> tuple[Path | None, str]:
+    requested = set(parse_language_spec(language_spec))
+    requested_indic = requested.intersection(INDIC_OCR_TESSERACT_LANGUAGES)
+    indic_dir = find_indic_tessdata_dir(language_spec)
+    if indic_dir is not None:
+        return indic_dir, f"Indic-OCR data: {indic_dir}"
+    if not requested_indic:
+        return None, "not needed for non-Indic OCR languages"
+
+    partial_details: list[str] = []
+    for path in candidate_indic_tessdata_dirs():
+        installed = traineddata_languages_in_dir(path)
+        if installed.intersection(requested_indic):
+            missing = sorted(requested - installed)
+            partial_details.append(f"{path} missing: {', '.join(missing)}")
+    if partial_details:
+        return None, "; ".join(partial_details)
+    return None, "not detected; install with: " + indic_tessdata_install_command()
+
+
+def huggingface_cache_detail(model_id: str) -> str:
+    cache_root = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    model_dir = cache_root / ("models--" + model_id.replace("/", "--"))
+    if model_dir.exists():
+        return f"weights cache: {model_dir}"
+    return "weights cache not found; first run will download"
+
+
 def collect_doctor_results(
     *,
     ocr_languages: str,
@@ -126,15 +194,18 @@ def collect_doctor_results(
     ocr_engine: str = "tesseract",
     ocr_preprocess: str = "none",
     video_path: Path | None = None,
+    tessdata_dir: Path | None = None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(CheckResult("python", True, sys.version.split()[0]))
 
-    for executable, hint, version_args in [
+    executable_checks = [
         ("ffmpeg", "sudo apt install ffmpeg", ["-version"]),
         ("ffprobe", "sudo apt install ffmpeg", ["-version"]),
-        ("tesseract", "sudo apt install tesseract-ocr", ["--version"]),
-    ]:
+    ]
+    if ocr_engine == OCR_TESSERACT_ENGINE:
+        executable_checks.append(("tesseract", "sudo apt install tesseract-ocr", ["--version"]))
+    for executable, hint, version_args in executable_checks:
         path = executable_path(executable)
         if path:
             version = executable_version(executable, args=version_args) or path
@@ -142,30 +213,52 @@ def collect_doctor_results(
         else:
             results.append(CheckResult(executable, False, f"missing; {hint}"))
 
-    if executable_path("tesseract"):
-        try:
-            installed = tesseract_languages()
-            missing = [lang for lang in parse_language_spec(ocr_languages) if lang not in installed]
-            detail = (
-                "installed: " + ", ".join(sorted(installed))
-                if not missing
-                else "missing: " + ", ".join(missing)
+    if ocr_engine == OCR_TESSERACT_ENGINE:
+        if executable_path("tesseract"):
+            try:
+                installed = (
+                    tesseract_languages(tessdata_dir) if tessdata_dir else tesseract_languages()
+                )
+                missing = [
+                    lang for lang in parse_language_spec(ocr_languages) if lang not in installed
+                ]
+                detail = (
+                    "installed: " + ", ".join(sorted(installed))
+                    if not missing
+                    else "missing: " + ", ".join(missing)
+                )
+                results.append(CheckResult("tesseract languages", not missing, detail))
+            except MissingDependencyError as exc:
+                results.append(CheckResult("tesseract languages", False, str(exc)))
+        else:
+            results.append(
+                CheckResult("tesseract languages", False, "tesseract executable missing")
             )
-            results.append(CheckResult("tesseract languages", not missing, detail))
-        except MissingDependencyError as exc:
-            results.append(CheckResult("tesseract languages", False, str(exc)))
-    else:
-        results.append(CheckResult("tesseract languages", False, "tesseract executable missing"))
-
-    if ocr_engine == "easyocr":
-        ok = python_module_available("easyocr")
+        try:
+            if tessdata_dir is not None:
+                installed = traineddata_languages_in_dir(tessdata_dir)
+                detail = (
+                    f"custom tessdata: {tessdata_dir}"
+                    if installed.intersection(INDIC_OCR_TESSERACT_LANGUAGES)
+                    else f"custom tessdata has no Indic-OCR marker languages: {tessdata_dir}"
+                )
+            else:
+                _indic_dir, detail = indic_tessdata_detail(ocr_languages)
+            results.append(CheckResult("Indic-OCR tessdata", True, detail))
+        except ConfigError as exc:
+            results.append(CheckResult("Indic-OCR tessdata", False, str(exc)))
+    elif ocr_engine in OCR_ENGINE_MODULES:
+        module, extra = OCR_ENGINE_MODULES[ocr_engine]
+        ok = python_module_available(module)
         results.append(
             CheckResult(
-                "ocr engine: easyocr",
+                f"ocr engine: {ocr_engine}",
                 ok,
-                "module: easyocr" if ok else "missing; install '.[ocr-easy]'",
+                f"module: {module}" if ok else f"missing; install '{extra}'",
             )
         )
+    else:
+        results.append(CheckResult("ocr engine", False, f"unknown engine: {ocr_engine}"))
 
     if ocr_preprocess != "none":
         results.append(
@@ -178,16 +271,46 @@ def collect_doctor_results(
 
     if asr_backend == "none":
         results.append(CheckResult("asr backend", True, "skipped"))
-    elif asr_backend == "whisper":
-        results.append(
-            CheckResult("asr backend", python_module_available("whisper"), "module: whisper")
-        )
-    elif asr_backend == "faster-whisper":
+    elif asr_backend == "auto":
+        indic_module, indic_extra = ASR_BACKEND_MODULES[ASR_INDICWHISPER_BACKEND]
+        whisper_module, whisper_extra = ASR_BACKEND_MODULES[ASR_WHISPER_BACKEND]
+        if python_module_available(indic_module):
+            results.append(
+                CheckResult(
+                    "asr backend: auto",
+                    True,
+                    "will use indicwhisper; " + huggingface_cache_detail(INDICWHISPER_MODEL_FAMILY),
+                )
+            )
+        elif python_module_available(whisper_module):
+            results.append(
+                CheckResult(
+                    "asr backend: auto",
+                    True,
+                    f"IndicWhisper missing; will fall back to whisper ({whisper_module})",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "asr backend: auto",
+                    False,
+                    f"missing; install '{indic_extra}' or '{whisper_extra}'",
+                )
+            )
+    elif asr_backend in ASR_BACKEND_MODULES:
+        module, extra = ASR_BACKEND_MODULES[asr_backend]
+        ok = python_module_available(module)
+        cache_detail = ""
+        if asr_backend == ASR_INDICWHISPER_BACKEND:
+            cache_detail = "; " + huggingface_cache_detail(INDICWHISPER_MODEL_FAMILY)
+        elif asr_backend == ASR_INDIC_CONFORMER_BACKEND:
+            cache_detail = "; " + huggingface_cache_detail(INDIC_CONFORMER_MODEL_ID)
         results.append(
             CheckResult(
                 "asr backend",
-                python_module_available("faster_whisper"),
-                "module: faster_whisper",
+                ok,
+                f"module: {module}{cache_detail}" if ok else f"missing; install '{extra}'",
             )
         )
     else:

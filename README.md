@@ -1,22 +1,23 @@
 # Burn-in Subtitle Checker
 
-Lightweight Python CLI for flagging mismatches between spoken dialogue and burned-in subtitles in video files. It can run a full pipeline with Whisper ASR, Tesseract OCR, timestamp-aware comparison, and HTML/JSON/CSV reports.
+Lightweight Python CLI for finding mismatches between spoken dialogue and burned-in subtitles in video files. It was built for PlanetRead's DMP 2026 issue: [Create Lightweight Audio-Subtitle Mismatch Flagging Tool](https://github.com/PlanetRead/Burn-in-subtitle-checker/issues/3).
 
-This project was built for the PlanetRead issue: **[DMP 2026]: Create Lightweight Audio-Subtitle Mismatch Flagging Tool**.
+The pipeline extracts timed speech with ASR, OCRs subtitle crops at those timestamps, compares the text, and writes reviewer-friendly HTML, JSON, and CSV reports.
 
 ## What It Does
 
-- Transcribes a video audio track into timed text segments with Whisper or faster-whisper, with optional VAD and hallucination filtering.
-- Samples video frames at each segment midpoint, with optional nearby timestamp offsets.
-- Crops the subtitle region, defaulting to the bottom 15% of the frame, with optional adaptive band detection (`--crop-mode auto`).
-- Runs Tesseract OCR (default) or EasyOCR with Hindi, Kannada, and English language packs by default.
-- Normalizes Indic text safely before comparison and ranks audio vs subtitle text with character, token, partial, and jiwer-backed word/character error rates.
-- Optionally compares both audio and OCR against a reference SRT for a 3-way mismatch view.
-- Runs OCR work in parallel across worker threads and persists progress to a checkpoint so long jobs can resume after a crash.
-- Generates deterministic HTML, JSON, and CSV reports. The HTML report supports search, status filters, and sortable columns.
-- Provides split-stage commands so expensive ASR/OCR work can be debugged and reused.
+- Transcribes video audio into timed text segments.
+- Uses Indic-specialised ASR by default for Hindi and Kannada when installed.
+- Captures subtitle-region frame crops at each segment midpoint, with optional nearby offsets.
+- Runs Tesseract OCR with Hindi, Kannada, and English by default, preferring Indic-OCR traineddata when available.
+- Falls back to stock Whisper, faster-whisper, stock Tesseract, and EasyOCR without changing the CLI shape.
+- Compares normalized Indic text with fuzzy, token, WER, CER, and composite scores.
+- Optionally compares audio and OCR against a reference SRT for a 3-way review.
+- Saves resumable OCR checkpoints and deterministic HTML/JSON/CSV reports.
 
 ## Install
+
+Create an environment:
 
 ```bash
 python3.12 -m venv .venv
@@ -25,66 +26,127 @@ python -m pip install -U pip
 python -m pip install -e ".[similarity]"
 ```
 
-For the full video/OCR/ASR path, install native tools and ASR extras:
+Install native tools:
 
 ```bash
 sudo apt update
 sudo apt install -y ffmpeg tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin tesseract-ocr-kan
-python -m pip install -e ".[asr,similarity]"
 ```
 
-If you prefer faster-whisper:
+Recommended PlanetRead setup for Hindi/Kannada:
 
 ```bash
-python -m pip install -e ".[asr-fast,similarity]"
+python -m pip install -e ".[asr-indic,asr,similarity,ocr-preprocess]"
 ```
 
-Optional OCR preprocessing uses OpenCV to upscale, grayscale, and threshold subtitle crops before Tesseract:
+Optional backend extras:
 
 ```bash
-python -m pip install -e ".[ocr-preprocess]"
-```
+# faster Whisper fallback
+python -m pip install -e ".[asr-fast]"
 
-For an alternative deep-learning OCR backend (helpful when Tesseract struggles on stylised fonts), install EasyOCR:
+# AI4Bharat IndicConformer; heavier ASR backend
+python -m pip install -e ".[asr-conformer]"
 
-```bash
+# EasyOCR fallback
 python -m pip install -e ".[ocr-easy]"
+
+# AI4Bharat Indic OCR model adapter
+python -m pip install -e ".[ocr-indic]"
+
+# PaddleOCR-VL for stylised subtitle fonts
+python -m pip install -e ".[ocr-paddle]"
+```
+
+Indic-OCR traineddata is not auto-downloaded. Install it into the default BurnSub path, then add any non-Indic packs you need, such as `eng.traineddata`:
+
+```bash
+mkdir -p ~/.local/share/burnsub/indic-ocr
+git clone https://github.com/indic-ocr/tessdata ~/.local/share/burnsub/indic-ocr/tessdata
+cp "$(tesseract --list-langs | sed -n 's/^List of available languages in "\(.*\)":/\1/p')"/eng.traineddata \
+  ~/.local/share/burnsub/indic-ocr/tessdata/
+```
+
+You can also point at another directory:
+
+```bash
+export BURNSUB_INDIC_TESSDATA=/path/to/indic-ocr/tessdata
 ```
 
 ## Quick Start
 
-Check the local machine first:
+Check the machine first:
 
 ```bash
-burnsub doctor --ocr-languages hin+kan+eng --asr-backend whisper
+burnsub doctor --ocr-languages hin+kan+eng --asr-backend auto
 ```
 
-Run the full pipeline:
+Run the full pipeline with the new defaults:
 
 ```bash
 burnsub check input.mp4 \
   --output-dir reports/input-check \
   --ocr-languages hin+kan+eng \
-  --asr-backend whisper \
-  --asr-model base \
   --asr-language auto \
   --threshold 0.75 \
   --formats html,json,csv
 ```
 
-Open `reports/input-check/report.html` and inspect rows marked `REVIEW`.
+The CLI logs the resolved ASR backend and OCR data path. Open `reports/input-check/report.html` and review rows that are not `OK`.
+
+## Backend Selection
+
+ASR default is `--asr-backend auto`:
+
+- Hindi/Kannada/Indic language hints use `indicwhisper` when `.[asr-indic]` is installed.
+- If IndicWhisper dependencies are missing, auto falls back to `whisper`.
+- Non-Indic language hints such as `en` use `whisper`.
+- User-selected backends are never rewritten.
+
+ASR options:
+
+```bash
+burnsub check input.mp4 --output-dir reports/hi --asr-language hi
+burnsub check input.mp4 --output-dir reports/whisper --asr-backend whisper --asr-model base
+burnsub check input.mp4 --output-dir reports/fast --asr-backend faster-whisper --asr-vad
+burnsub check input.mp4 --output-dir reports/conformer --asr-backend indic-conformer --asr-language kn
+burnsub check input.mp4 --output-dir reports/conformer-rnnt --asr-backend indic-conformer --asr-conformer-decoder rnnt
+```
+
+`--asr-vad`, `--asr-no-speech-threshold`, hallucination filtering, and `--asr-initial-prompt` continue to work where the backend exposes the needed signals. IndicConformer does not expose VAD or no-speech probabilities, so those controls are ignored for that backend.
+
+OCR default is Tesseract:
+
+- If a complete Indic-OCR tessdata directory is detected, Tesseract uses it.
+- Otherwise Tesseract uses the stock system language packs.
+- `--ocr-engine` can still be set explicitly.
+
+OCR options:
+
+```bash
+burnsub check input.mp4 --output-dir reports/tess --ocr-engine tesseract
+burnsub check input.mp4 --output-dir reports/easy --ocr-engine easyocr
+burnsub check input.mp4 --output-dir reports/paddle --ocr-engine paddleocr-vl
+burnsub check input.mp4 --output-dir reports/ai4bharat --ocr-engine ai4bharat
+```
+
+For AI4Bharat OCR weights hosted under a different model id:
+
+```bash
+export BURNSUB_AI4BHARAT_OCR_MODEL_ID=your-org/your-indic-ocr-model
+```
 
 ## Split-Stage Workflow
 
-Use split commands when ASR/OCR is slow or you need to inspect intermediate data.
+Use split commands when ASR/OCR is slow or you need reusable intermediate JSON:
 
 ```bash
-burnsub transcribe input.mp4 --output transcript.json --asr-model base
+burnsub transcribe input.mp4 --output transcript.json --asr-language hi
 burnsub ocr input.mp4 transcript.json --output ocr.json --ocr-languages hin+kan+eng
 burnsub compare transcript.json ocr.json --output-dir reports/input-check
 ```
 
-You can also run `check` with precomputed data:
+You can also skip expensive stages in `check`:
 
 ```bash
 burnsub check input.mp4 \
@@ -95,99 +157,75 @@ burnsub check input.mp4 \
 
 ## Useful Options
 
-- `--workers N`: run OCR on N worker threads (default: `min(8, CPU count)`). Frame extraction and Tesseract calls run concurrently.
-- `--resume`: pick up where a previous run left off using `<output-dir>/ocr.partial.jsonl`.
+- `--workers N`: OCR worker threads, defaulting to `min(8, CPU count)`.
+- `--resume`: reuse `<output-dir>/ocr.partial.jsonl`.
 - `--crop-bottom-percent 15`: OCR the bottom 15% of the frame.
-- `--crop-mode auto`: detect the burned-in subtitle band automatically (requires `.[ocr-preprocess]`).
-- `--crop-box x,y,w,h`: use an explicit pixel crop box instead.
-- `--frame-offsets 0,-0.25,0.25`: OCR multiple nearby frames and keep the strongest text.
-- `--ocr-engine easyocr`: use EasyOCR instead of Tesseract.
-- `--ocr-preprocess threshold`: use OpenCV preprocessing before OCR.
-- `--ocr-upscale-factor 2`: upscale OCR crops before preprocessing.
-- `--asr-vad`: enable faster-whisper VAD to skip silent stretches.
-- `--asr-no-speech-threshold 0.6`: drop ASR segments whose no-speech probability exceeds this value.
-- `--asr-keep-hallucinations`: opt out of dropping known Whisper hallucination phrases.
-- `--asr-initial-prompt "..."`: bias ASR with an initial prompt.
-- `--reference-srt path.srt`: also compare each audio/OCR pair to a reference SRT.
-- `--threshold 0.75`: rows below this fuzzy score are marked `REVIEW`.
-- `--wer-threshold 0.3`: extra check; rows above this WER are flagged even when the score passes.
-- `--save-artifacts`: preserve OCR crops for report links and debugging.
-- `--fail-on-mismatch`: return exit code `1` when review rows are found.
-- `--formats html,json,csv`: choose one or more report formats.
-- `--quiet`: silence the stderr progress output.
+- `--crop-mode auto`: detect the subtitle band automatically; requires `.[ocr-preprocess]`.
+- `--crop-box x,y,w,h`: use an explicit pixel crop box.
+- `--frame-offsets 0,-0.25,0.25`: OCR nearby frames and keep the best text.
+- `--ocr-preprocess threshold --ocr-upscale-factor 2`: improve low-contrast crops.
+- `--tessdata-dir path`: override Tesseract traineddata discovery.
+- `--reference-srt path.srt`: add reference-vs-audio and reference-vs-subtitle columns.
+- `--threshold 0.75`: fuzzy score below this becomes `REVIEW`.
+- `--wer-threshold 0.3`: flag rows with high WER even when fuzzy score passes.
+- `--save-artifacts`: preserve OCR crops for report links.
+- `--fail-on-mismatch`: exit `1` when review rows are found.
+- `--quiet`: silence progress and backend-selection logs.
 
 ## Exit Codes
 
 - `0`: command completed.
 - `1`: mismatches found and `--fail-on-mismatch` was used.
 - `2`: invalid input or configuration.
-- `3`: missing dependency, ASR backend, or OCR language pack.
+- `3`: missing dependency, ASR backend, model, or OCR language pack.
 - `4`: processing failed.
 
-## Hindi and Kannada Support
+## Hindi and Kannada Notes
 
-Tesseract must have the corresponding traineddata installed:
+The default OCR language string is `hin+kan+eng`. Stock Tesseract packs work, but Indic-OCR traineddata is recommended for Indic scripts. `burnsub doctor` reports whether it found stock packs or the improved Indic-OCR data and prints the install command when an upgrade is available.
 
-- Hindi: `hin`
-- Kannada: `kan`
-- English fallback: `eng`
+IndicWhisper model ids can be overridden without changing CLI flags:
 
-The default OCR language string is `hin+kan+eng`. Use `burnsub doctor` to verify language packs before processing real videos.
+```bash
+export BURNSUB_INDICWHISPER_HI_SMALL_MODEL_ID=/models/indicwhisper-hi-small
+export BURNSUB_INDICWHISPER_KN_MEDIUM_MODEL_ID=/models/indicwhisper-kn-medium
+export BURNSUB_INDICWHISPER_MODEL_ID=ai4bharat/indicwhisper
+```
 
-## Reliability and Throughput Notes
+## Reliability Notes
 
-Burned-in subtitle OCR is sensitive to font, contrast, resolution, compression, placement, and timing. If the report shows empty or poor OCR, use `--save-artifacts` and inspect the crop images. If subtitles are not in the bottom band, use `--crop-box`, adjust `--crop-bottom-percent`, or try `--crop-mode auto`.
+Burned-in subtitle OCR is sensitive to font, contrast, resolution, compression, placement, and timing. If OCR is empty or noisy, rerun with `--save-artifacts` and inspect the crop images. Then try `--crop-box`, `--crop-mode auto`, `--ocr-preprocess threshold`, or a stylised-font backend such as `paddleocr-vl`.
 
-For long videos, prefer the split-stage workflow so transcript and OCR JSON can be reused without rerunning every stage. Within a single OCR run, the pipeline parallelises ffmpeg frame extraction and Tesseract calls across `--workers` threads (defaulting to `min(8, CPU count)`); a per-segment JSONL checkpoint at `<output-dir>/ocr.partial.jsonl` is written after each segment so `--resume` can pick up after a crash.
+For long videos, prefer the split-stage workflow so transcript and OCR JSON can be reused. OCR writes a JSONL checkpoint after each segment, so `--resume` can continue after a crash.
 
-The comparison stage indexes OCR rows by segment index and timestamp, so large transcript/OCR tables do not require a full OCR scan for every audio segment. When multiple OCR frame offsets are sampled, the chosen OCR text is ranked against the audio segment text instead of only choosing the longest OCR result.
+When reference subtitles are available, pass `--reference-srt subs.srt`. The report then shows whether the audio leg, subtitle OCR leg, or both drift from the reference.
 
-If Tesseract struggles on compressed or low-contrast subtitles, install `.[ocr-preprocess]` and try `--ocr-preprocess threshold --ocr-upscale-factor 2`, or fall back to `--ocr-engine easyocr` (deep learning) after installing `.[ocr-easy]`. Reports include optional jiwer-backed word error rate and character error rate fields when `.[similarity]` is installed, plus a composite score that blends character, token, and partial similarity. Faster-whisper users can pass `--asr-vad` to skip silent stretches, and the pipeline drops common Whisper hallucination phrases by default.
+## Development
 
-When a reference SRT is available, pass `--reference-srt subs.srt` to add 3-way comparison columns (`reference_vs_audio_score`, `reference_vs_subtitle_score`) so reviewers can tell whether a mismatch comes from the audio leg, the subtitle leg, or both.
-
-## Development Checks
-
-Run the fast checks before opening a PR:
+Run the main checks:
 
 ```bash
 ruff check .
 python3 -m pytest
 ```
 
-Run fixture and native smoke checks when touching CLI, report, ffmpeg, or OCR behavior:
+Run native fixture smoke checks when touching CLI, media, OCR, or reporting:
 
 ```bash
 scripts/run_fixture_e2e.sh /tmp/burnsub-fixture-e2e
 scripts/run_native_smoke.sh /tmp/burnsub-native-smoke
 ```
 
-End-to-end regression tests run against committed video bundles in `fixtures/regression/bundle/` and `fixtures/realspeech/bundle/`:
+Regression tests use committed fixture bundles:
 
 ```bash
-# Fast: precomputed transcript + tesseract OCR vs burned-in text
 pytest -q tests/test_regression_pipeline.py
-
-# Real Whisper ASR + tesseract OCR against burned-in TTS speech
 BURNSUB_RUN_REAL_SPEECH=1 pytest -q tests/test_real_speech_pipeline.py
 ```
 
-Bundles are deterministic so CI does not need a TTS toolchain. To rebuild from the spec after editing it (`fixtures/regression/spec.json` / `fixtures/realspeech/spec.json`):
+To rebuild fixtures after editing their specs:
 
 ```bash
 python scripts/build_regression_fixture.py fixtures/regression/bundle
 python scripts/build_real_speech_fixture.py fixtures/realspeech/bundle
-# Or set BURNSUB_REBUILD_FIXTURE=1 when running the test
-```
-
-To inspect the report a regression run produces:
-
-```bash
-burnsub check fixtures/regression/bundle/video.mp4 \
-  --transcript-json fixtures/regression/bundle/transcript.json \
-  --reference-srt fixtures/regression/bundle/reference.srt \
-  --output-dir reports/regression \
-  --ocr-languages eng --workers 4 \
-  --threshold 0.75 --wer-threshold 0.2
-open reports/regression/report.html
 ```

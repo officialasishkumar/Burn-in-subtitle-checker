@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .asr import transcribe_video
+from .asr import resolve_asr_backend, transcribe_video
+from .backend_config import (
+    ASR_AUTO_BACKEND,
+    ASR_BACKEND_CHOICES,
+    DOCTOR_ASR_BACKEND_CHOICES,
+    OCR_ENGINE_CHOICES,
+    OCR_TESSERACT_ENGINE,
+)
 from .compare import ReferenceWindow, compare_segments, count_review_rows
 from .dependencies import collect_doctor_results
 from .exceptions import BurnSubError, ConfigError
@@ -28,7 +35,7 @@ from .media import (
     parse_crop_box,
     validate_video_path,
 )
-from .ocr import ocr_video_segments, parse_frame_offsets
+from .ocr import ocr_video_segments, parse_frame_offsets, resolve_tesseract_data_dir
 from .progress import ProgressReporter
 from .report import write_reports
 
@@ -66,9 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--ocr-languages", default="hin+kan+eng", help="Tesseract language spec.")
     doctor.add_argument(
         "--ocr-engine",
-        default="tesseract",
-        choices=["tesseract", "easyocr"],
+        default=OCR_TESSERACT_ENGINE,
+        choices=OCR_ENGINE_CHOICES,
         help="OCR engine to validate.",
+    )
+    doctor.add_argument(
+        "--tessdata-dir",
+        type=Path,
+        default=None,
+        help="Optional Tesseract traineddata directory to validate.",
     )
     doctor.add_argument(
         "--ocr-preprocess",
@@ -78,8 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--asr-backend",
-        default="whisper",
-        choices=["whisper", "faster-whisper", "none"],
+        default=ASR_AUTO_BACKEND,
+        choices=DOCTOR_ASR_BACKEND_CHOICES,
         help="ASR backend to validate.",
     )
     doctor.add_argument("--video", type=Path, help="Optional input video to probe.")
@@ -189,17 +202,27 @@ def _add_common_pipeline_args(parser: argparse.ArgumentParser) -> None:
 def _add_asr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--asr-backend",
-        default="whisper",
-        choices=["whisper", "faster-whisper"],
-        help="ASR backend.",
+        default=ASR_AUTO_BACKEND,
+        choices=ASR_BACKEND_CHOICES,
+        help=(
+            "ASR backend. 'auto' uses IndicWhisper for supported Indic languages "
+            "when installed, otherwise Whisper."
+        ),
     )
-    parser.add_argument("--asr-model", default="base", help="Whisper model name.")
+    parser.add_argument(
+        "--asr-model",
+        default="base",
+        help=(
+            "ASR model name or path. IndicWhisper accepts small, medium, large "
+            "(default alias: medium)."
+        ),
+    )
     parser.add_argument("--asr-language", default="auto", help="ASR language code, or auto.")
     parser.add_argument("--device", default="auto", help="ASR device: auto, cpu, cuda, etc.")
     parser.add_argument(
         "--asr-vad",
         action="store_true",
-        help="Enable VAD on faster-whisper to skip silent stretches.",
+        help="Enable VAD where supported (faster-whisper; ignored by IndicConformer).",
     )
     parser.add_argument(
         "--asr-no-speech-threshold",
@@ -215,7 +238,13 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--asr-initial-prompt",
         default=None,
-        help="Optional initial prompt passed to the ASR backend.",
+        help="Optional initial prompt for Whisper-compatible backends; ignored otherwise.",
+    )
+    parser.add_argument(
+        "--asr-conformer-decoder",
+        default="ctc",
+        choices=["ctc", "rnnt"],
+        help="IndicConformer decoder. CTC is the default; RNNT is slower and optional.",
     )
 
 
@@ -223,9 +252,15 @@ def _add_ocr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ocr-languages", default="hin+kan+eng", help="Tesseract languages.")
     parser.add_argument(
         "--ocr-engine",
-        default="tesseract",
-        choices=["tesseract", "easyocr"],
+        default=OCR_TESSERACT_ENGINE,
+        choices=OCR_ENGINE_CHOICES,
         help="OCR engine to use for subtitle crops.",
+    )
+    parser.add_argument(
+        "--tessdata-dir",
+        type=Path,
+        default=None,
+        help="Optional Tesseract traineddata directory; auto-detects Indic-OCR data when omitted.",
     )
     parser.add_argument(
         "--crop-bottom-percent",
@@ -294,6 +329,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ocr_preprocess=args.ocr_preprocess,
         asr_backend=args.asr_backend,
         video_path=args.video,
+        tessdata_dir=args.tessdata_dir,
     )
     width = max(len(result.name) for result in results)
     for result in results:
@@ -314,9 +350,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         ensure_audio_stream(args.video)
         _emit(args, "Transcribing audio...")
+        asr_backend = _resolve_and_emit_asr(args)
         transcript_segments = transcribe_video(
             args.video,
-            backend=args.asr_backend,
+            backend=asr_backend,
             model_name=args.asr_model,
             language=args.asr_language,
             device=args.device,
@@ -324,6 +361,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             no_speech_threshold=args.asr_no_speech_threshold,
             drop_hallucinations=not args.asr_keep_hallucinations,
             initial_prompt=args.asr_initial_prompt,
+            conformer_decoder=args.asr_conformer_decoder,
         )
         write_json(
             output_dir / "transcript.json",
@@ -354,9 +392,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_transcribe(args: argparse.Namespace) -> int:
     validate_video_path(args.video)
     ensure_audio_stream(args.video)
+    asr_backend = _resolve_and_emit_asr(args)
     segments = transcribe_video(
         args.video,
-        backend=args.asr_backend,
+        backend=asr_backend,
         model_name=args.asr_model,
         language=args.asr_language,
         device=args.device,
@@ -364,6 +403,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         no_speech_threshold=args.asr_no_speech_threshold,
         drop_hallucinations=not args.asr_keep_hallucinations,
         initial_prompt=args.asr_initial_prompt,
+        conformer_decoder=args.asr_conformer_decoder,
     )
     write_json(args.output, transcript_payload(segments, str(args.video)))
     print(f"Wrote transcript JSON: {args.output}")
@@ -422,6 +462,7 @@ def _run_ocr(args: argparse.Namespace, transcript_segments: list, output_dir: Pa
 
     progress = _build_progress(args, total=len(transcript_segments), label="ocr")
     try:
+        tessdata_dir = _resolve_and_emit_ocr(args)
         return ocr_video_segments(
             args.video,
             transcript_segments,
@@ -439,6 +480,7 @@ def _run_ocr(args: argparse.Namespace, transcript_segments: list, output_dir: Pa
             checkpoint_path=checkpoint_path,
             resume=resume,
             progress=progress,
+            tessdata_dir=tessdata_dir,
         )
     finally:
         if progress is not None:
@@ -473,6 +515,31 @@ def _emit(args: argparse.Namespace, message: str) -> None:
         print(message, file=sys.stderr)
 
 
+def _resolve_and_emit_asr(args: argparse.Namespace) -> str:
+    resolution = resolve_asr_backend(args.asr_backend, language=args.asr_language)
+    args.resolved_asr_backend = resolution.selected
+    _emit(args, f"ASR backend: {resolution.selected} ({resolution.reason})")
+    return resolution.selected
+
+
+def _resolve_and_emit_ocr(args: argparse.Namespace) -> Path | None:
+    if args.ocr_engine != OCR_TESSERACT_ENGINE:
+        _emit(args, f"OCR engine: {args.ocr_engine} (user selected)")
+        return None
+    tessdata_dir = resolve_tesseract_data_dir(
+        args.ocr_languages,
+        requested_dir=getattr(args, "tessdata_dir", None),
+    )
+    args.resolved_tessdata_dir = str(tessdata_dir or "")
+    if tessdata_dir is None:
+        _emit(args, "OCR engine: tesseract (stock Tesseract data)")
+    elif getattr(args, "tessdata_dir", None) is not None:
+        _emit(args, f"OCR engine: tesseract (custom tessdata: {tessdata_dir})")
+    else:
+        _emit(args, f"OCR engine: tesseract (Indic-OCR data: {tessdata_dir})")
+    return tessdata_dir
+
+
 def _load_reference(args: argparse.Namespace) -> list[ReferenceWindow] | None:
     path: Path | None = getattr(args, "reference_srt", None)
     if path is None:
@@ -495,10 +562,16 @@ def _write_cli_reports(
         "frame_offsets": getattr(args, "frame_offsets", None),
         "ocr_preprocess": getattr(args, "ocr_preprocess", None),
         "ocr_upscale_factor": getattr(args, "ocr_upscale_factor", None),
-        "asr_backend": getattr(args, "asr_backend", None),
+        "asr_backend": getattr(args, "resolved_asr_backend", getattr(args, "asr_backend", None)),
         "asr_model": getattr(args, "asr_model", None),
         "asr_language": getattr(args, "asr_language", None),
         "asr_vad": getattr(args, "asr_vad", None),
+        "asr_conformer_decoder": getattr(args, "asr_conformer_decoder", None),
+        "tessdata_dir": str(
+            getattr(args, "resolved_tessdata_dir", None)
+            or getattr(args, "tessdata_dir", None)
+            or ""
+        ),
         "workers": getattr(args, "workers", None),
         "wer_threshold": getattr(args, "wer_threshold", None),
         "reference_srt": str(getattr(args, "reference_srt", None) or ""),

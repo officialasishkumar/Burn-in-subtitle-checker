@@ -70,26 +70,49 @@ def composite_similarity(left: str, right: str) -> float:
 
 
 def word_error_rate(left: str, right: str) -> float | None:
-    return _jiwer_error_rate(left, right, metric=jiwer_wer)
+    return _error_rate(left, right, metric=jiwer_wer, unit="word")
 
 
 def character_error_rate(left: str, right: str) -> float | None:
-    return _jiwer_error_rate(left, right, metric=jiwer_cer)
+    return _error_rate(left, right, metric=jiwer_cer, unit="char")
 
 
-def _jiwer_error_rate(left: str, right: str, *, metric) -> float | None:
-    if metric is None:
-        return None
+def _error_rate(left: str, right: str, *, metric, unit: str) -> float | None:
     left_norm = normalize_text(left)
     right_norm = normalize_text(right)
     if not left_norm and not right_norm:
         return 0.0
     if not left_norm or not right_norm:
         return 1.0
+    if metric is None:
+        return _fallback_error_rate(left_norm, right_norm, unit=unit)
     try:
         return round(float(metric(left_norm, right_norm)), 4)
     except ValueError:
         return None
+
+
+def _fallback_error_rate(left_norm: str, right_norm: str, *, unit: str) -> float:
+    left_units = left_norm.split() if unit == "word" else list(left_norm)
+    right_units = right_norm.split() if unit == "word" else list(right_norm)
+    if not left_units and not right_units:
+        return 0.0
+    if not left_units or not right_units:
+        return 1.0
+    return round(_edit_distance(left_units, right_units) / len(left_units), 4)
+
+
+def _edit_distance(left: list[str], right: list[str]) -> int:
+    previous = list(range(len(right) + 1))
+    for row_index, left_item in enumerate(left, start=1):
+        current = [row_index]
+        for column_index, right_item in enumerate(right, start=1):
+            substitution = previous[column_index - 1] + int(left_item != right_item)
+            insertion = current[column_index - 1] + 1
+            deletion = previous[column_index] + 1
+            current.append(min(substitution, insertion, deletion))
+        previous = current
+    return previous[-1]
 
 
 def _character_similarity(left_norm: str, right_norm: str) -> float:

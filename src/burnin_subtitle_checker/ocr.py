@@ -13,8 +13,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from .backend_config import (
+    OCR_AI4BHARAT_ENGINE,
+    OCR_EASYOCR_ENGINE,
+    OCR_ENGINE_CHOICES,
+    OCR_PADDLE_VL_ENGINE,
+    OCR_TESSERACT_ENGINE,
+)
 from .compare import similarity_score
 from .dependencies import (
+    find_indic_tessdata_dir,
     parse_language_spec,
     python_module_available,
     require_executable,
@@ -72,6 +80,7 @@ def ocr_video_segments(
     checkpoint_path: Path | None = None,
     resume: bool = False,
     progress: ProgressReporter | None = None,
+    tessdata_dir: Path | None = None,
 ) -> list[OcrSegment]:
     _validate_ocr_options(
         crop_bottom_percent=crop_bottom_percent,
@@ -82,7 +91,12 @@ def ocr_video_segments(
         engine=engine,
     )
 
-    ocr_callable = _resolve_engine(engine, languages=languages, psm=psm)
+    ocr_callable = _resolve_engine(
+        engine,
+        languages=languages,
+        psm=psm,
+        tessdata_dir=tessdata_dir,
+    )
     require_ocr_preprocess_backend(preprocess)
     offsets = frame_offsets or [0.0]
 
@@ -227,17 +241,42 @@ def _build_segment(
     )
 
 
-def _resolve_engine(engine: str, *, languages: str, psm: int) -> OcrCallable:
-    if engine == "tesseract":
+def resolve_tesseract_data_dir(
+    languages: str,
+    *,
+    requested_dir: Path | None = None,
+) -> Path | None:
+    if requested_dir is not None:
+        return requested_dir
+    return find_indic_tessdata_dir(languages)
+
+
+def _resolve_engine(
+    engine: str,
+    *,
+    languages: str,
+    psm: int,
+    tessdata_dir: Path | None = None,
+) -> OcrCallable:
+    if engine == OCR_TESSERACT_ENGINE:
+        data_dir = resolve_tesseract_data_dir(languages, requested_dir=tessdata_dir)
         require_executable("tesseract", "sudo apt install tesseract-ocr")
-        require_tesseract_languages(languages)
+        if data_dir is None:
+            require_tesseract_languages(languages)
+        else:
+            require_tesseract_languages(languages, tessdata_dir=data_dir)
         parse_language_spec(languages)
 
         def call(image_path: Path, langs: str, _segment_index: int) -> str:
-            return run_tesseract(image_path, languages=langs, psm=psm)
+            return run_tesseract(
+                image_path,
+                languages=langs,
+                psm=psm,
+                tessdata_dir=data_dir,
+            )
 
         return call
-    if engine == "easyocr":
+    if engine == OCR_EASYOCR_ENGINE:
         from .easyocr_engine import map_languages, run_easyocr
 
         codes = map_languages(languages)
@@ -250,22 +289,45 @@ def _resolve_engine(engine: str, *, languages: str, psm: int) -> OcrCallable:
             return run_easyocr(image_path, languages=langs)
 
         return call
+    if engine == OCR_PADDLE_VL_ENGINE:
+        from .paddleocr_vl_engine import run_paddleocr_vl
+
+        def call(image_path: Path, langs: str, _segment_index: int) -> str:
+            return run_paddleocr_vl(image_path, languages=langs)
+
+        return call
+    if engine == OCR_AI4BHARAT_ENGINE:
+        from .ai4bharat_ocr_engine import run_ai4bharat_ocr
+
+        def call(image_path: Path, langs: str, _segment_index: int) -> str:
+            return run_ai4bharat_ocr(image_path, languages=langs)
+
+        return call
     raise ConfigError(f"Unsupported --ocr-engine: {engine}")
 
 
-def run_tesseract(image_path: Path, *, languages: str, psm: int = 6) -> str:
+def run_tesseract(
+    image_path: Path,
+    *,
+    languages: str,
+    psm: int = 6,
+    tessdata_dir: Path | None = None,
+) -> str:
+    command = [
+        "tesseract",
+        str(image_path),
+        "stdout",
+        "-l",
+        languages,
+        "--psm",
+        str(psm),
+        "-c",
+        "preserve_interword_spaces=1",
+    ]
+    if tessdata_dir is not None:
+        command.extend(["--tessdata-dir", str(tessdata_dir)])
     completed = run_command(
-        [
-            "tesseract",
-            str(image_path),
-            "stdout",
-            "-l",
-            languages,
-            "--psm",
-            str(psm),
-            "-c",
-            "preserve_interword_spaces=1",
-        ],
+        command,
         timeout=120,
     )
     if completed.returncode != 0:
@@ -365,8 +427,8 @@ def _validate_ocr_options(
         raise ConfigError("--ocr-upscale-factor must be greater than 0")
     if workers < 1:
         raise ConfigError("--workers must be at least 1")
-    if engine not in {"tesseract", "easyocr"}:
-        raise ConfigError("--ocr-engine must be one of: tesseract, easyocr")
+    if engine not in OCR_ENGINE_CHOICES:
+        raise ConfigError("--ocr-engine must be one of: " + ", ".join(OCR_ENGINE_CHOICES))
 
 
 def _safe_unlink(path: Path) -> None:

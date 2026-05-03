@@ -1,0 +1,155 @@
+{
+  "description": "Synthetic multilingual stress cases for burn-in subtitle mismatch detection. Repeat or target-duration scales this into long videos without committing media.",
+  "repeat": 1,
+  "video": {
+    "width": 1280,
+    "height": 720,
+    "fps": 25,
+    "background": "#101010",
+    "font_name": "Noto Sans",
+    "font_size": 44,
+    "text_color": "#ffffff",
+    "outline_color": "#000000",
+    "outline": 3,
+    "shadow": 0,
+    "margin_v": 54,
+    "segment_seconds": 2.4,
+    "max_chars_per_line": 36,
+    "audio_frequency": 440,
+    "recommended_crop_bottom_percent": 34
+  },
+  "comparison": {
+    "threshold": 0.82,
+    "wer_threshold": 0.25
+  },
+  "segments": [
+    {
+      "language": "kn",
+      "ocr_language": "kan",
+      "audio_text": "ಅವಳು ಇಂದು ಶಾಲೆಗೆ ಹೋದಳು",
+      "burn_text": "ಅವಳು ಇಂದು ಶಾಲೆಗೆ ಹೋದಳು",
+      "kind": "kannada-match",
+      "expected_status": "OK"
+    },
+    {
+      "language": "kn",
+      "ocr_language": "kan",
+      "audio_text": "ಅವರು ನಾಳೆ ಬೆಳಗ್ಗೆ ಬರುತ್ತಾರೆ",
+      "burn_text": "ಅವರು ನಾಳೆ ಸಂಜೆ ಬರುತ್ತಾರೆ",
+      "kind": "kannada-small-token-swap",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "hi",
+      "ocr_language": "hin",
+      "audio_text": "आज बारह बच्चे आए",
+      "burn_text": "आज इक्कीस बच्चे आए",
+      "kind": "hindi-number-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "hi",
+      "ocr_language": "hin",
+      "audio_text": "वह घर जल्दी लौट आई",
+      "burn_text": "वह घर जल्दी लौट आई",
+      "kind": "hindi-match",
+      "expected_status": "OK"
+    },
+    {
+      "language": "ta",
+      "ocr_language": "tam",
+      "audio_text": "அவர் இன்று பள்ளிக்கு சென்றார்",
+      "burn_text": "அவர் இன்று சந்தைக்கு சென்றார்",
+      "kind": "tamil-subtle-place-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "te",
+      "ocr_language": "tel",
+      "audio_text": "ఆమె రేపు ఉదయం వస్తుంది",
+      "burn_text": "ఆమె రేపు ఉదయం వస్తుంది",
+      "kind": "telugu-match",
+      "expected_status": "OK"
+    },
+    {
+      "language": "ml",
+      "ocr_language": "mal",
+      "audio_text": "അവൻ പുസ്തകം വായിച്ചു",
+      "burn_text": "അവൻ കത്ത് വായിച്ചു",
+      "kind": "malayalam-object-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "mr",
+      "ocr_language": "mar",
+      "audio_text": "बैठक सोमवार सकाळी आहे",
+      "burn_text": "बैठक मंगळवार सकाळी आहे",
+      "kind": "marathi-day-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "gu",
+      "ocr_language": "guj",
+      "audio_text": "તે આજે શાળામાં ગયો",
+      "burn_text": "તે આજે શાળામાં ગયો",
+      "kind": "gujarati-match",
+      "expected_status": "OK"
+    },
+    {
+      "language": "bn",
+      "ocr_language": "ben",
+      "audio_text": "সে আজ বাজারে যাবে",
+      "burn_text": "সে কাল বাজারে যাবে",
+      "kind": "bengali-date-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "pa",
+      "ocr_language": "pan",
+      "audio_text": "ਉਹ ਅੱਜ ਕੰਮ ਤੇ ਗਿਆ",
+      "burn_text": "",
+      "kind": "punjabi-missing-subtitle",
+      "expected_status": "NO_SUBTITLE"
+    },
+    {
+      "language": "ur",
+      "ocr_language": "urd",
+      "audio_text": "وہ آج اسکول گیا",
+      "burn_text": "وہ آج اسکول گیا",
+      "kind": "urdu-rtl-match",
+      "expected_status": "OK"
+    },
+    {
+      "language": "as",
+      "ocr_language": "asm",
+      "audio_text": "তেওঁ আজি বিদ্যালয়লৈ গ'ল",
+      "burn_text": "তেওঁ কালি বিদ্যালয়লৈ গ'ল",
+      "kind": "assamese-day-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "or",
+      "ocr_language": "ori",
+      "audio_text": "ସେ ଆଜି ପୁସ୍ତକ ପଢିଲା",
+      "burn_text": "ସେ ଆଜି ଚିଠି ପଢିଲା",
+      "kind": "odia-object-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "sa",
+      "ocr_language": "san",
+      "audio_text": "अहं पुस्तकं पठामि",
+      "burn_text": "अहं पत्रं पठामि",
+      "kind": "sanskrit-object-change",
+      "expected_status": "REVIEW"
+    },
+    {
+      "language": "en",
+      "ocr_language": "eng",
+      "audio_text": "The train leaves at nine",
+      "burn_text": "The train leaves at ten",
+      "kind": "english-control-number-change",
+      "expected_status": "REVIEW"
+    }
+  ]
+}

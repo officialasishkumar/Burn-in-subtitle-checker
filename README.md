@@ -229,3 +229,17 @@ To rebuild fixtures after editing their specs:
 python scripts/build_regression_fixture.py fixtures/regression/bundle
 python scripts/build_real_speech_fixture.py fixtures/realspeech/bundle
 ```
+
+Build multilingual stress fixtures without committing third-party media:
+
+```bash
+python -m pip install -e '.[fixtures]'
+python scripts/build_stress_fixture.py /tmp/burnsub-stress/bundle --target-duration 900
+BURNSUB_STRESS_DURATION=900 scripts/run_stress_fixture.sh /tmp/burnsub-stress
+```
+
+Edit `fixtures/stress/spec.json` or the generated `burned_subtitles.srt` to add
+small mismatches, missing subtitles, timing drift, and long-video cases. See
+`docs/test-media-sources.md` for Kannada/Indic captioned source videos and
+download commands. The stress generator uses ffmpeg's subtitles filter when
+available, and falls back to Pillow frame rendering with the `fixtures` extra.

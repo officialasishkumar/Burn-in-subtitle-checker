@@ -9,4 +9,5 @@ build/
 *.egg-info/
 reports/
 artifacts/
+test-media/
 .DS_Store
